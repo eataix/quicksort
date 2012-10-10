@@ -38,7 +38,7 @@
 /*
  * Prototypes
  */
-ssize_t read_all_ints(int fildes, int *buf, int ntimes);
+ssize_t         read_all_ints(int fildes, int *buf, int ntimes);
 
 ssize_t         write_all_ints(int fildes, int *buf, int ntimes);
 
@@ -117,8 +117,7 @@ quickPipe(int A[], int n, int p)
                     child_tag;
 
     int             fdmax;
-    fd_set          master,
-                    read_fds;
+    fd_set          read_fds;
 
     setbuf(stdout, NULL);
 
@@ -143,8 +142,6 @@ quickPipe(int A[], int n, int p)
     fd_pc[1] = -1;
     fd_reply = -1;
 
-    FD_ZERO(&master);
-
     size = n;
     buffer = A;
     child_id = 0;
@@ -152,8 +149,8 @@ quickPipe(int A[], int n, int p)
     tag = 0;
     last_tag_used = p + 1;
 
-    // printArray(A, n);
-    fdmax = -1;
+    log_info("Input:");
+    printArray(A, n);
 
     while (p != 1) {
         // Be practical!
@@ -205,11 +202,9 @@ quickPipe(int A[], int n, int p)
 
             // file descriptors
             fd_reply = dup(fd_cp[child_id][1]);
-            for (i = 0; i < p; ++i) {
-                // if (i != child_id) {
+            for (i = 0; i < k; ++i) {
                 CLOSEFD(fd_cp[i][1]);
                 CLOSEFD(fd_cp[i][0]);
-                // }
             }
 
             CLOSEFD(fd_pc[1]);
@@ -217,8 +212,6 @@ quickPipe(int A[], int n, int p)
 
             child_id = 0;
             num_children_created = 0;
-            fdmax = -1;
-            FD_ZERO(&master);
             break;
 
         default:
@@ -238,9 +231,6 @@ quickPipe(int A[], int n, int p)
                   "%d:\tCannot write %d to the pipe.", tag, left_size);
             log_info("%d:\tHas sent %d elments to %d", tag, right_size,
                      new_tag);
-
-            FD_SET(fd_cp[child_id][0], &master);
-            fdmax = max(fdmax, fd_cp[child_id][0]);
 
             CLOSEFD(fd_pc[0]);
             CLOSEFD(fd_pc[1]);
@@ -265,39 +255,39 @@ quickPipe(int A[], int n, int p)
     tv.tv_usec = 500000;
     int             t = 0;
 
-    ++fdmax;
     if (tag % 2 == 0) {
-        log_info("%d\tis waiting for reply", tag);
+        if (num_children_created == 0) {
+            log_info("%d\tis waiting for reply", tag);
+        }
         // check(fdmax != -1, "Panic");
-        while (1) {
-            if (num_children_created == 0) {
-                break;
+        while (num_children_created > 0) {
+            fdmax = -1;
+            FD_ZERO(&read_fds);
+            for (i = 0; i < child_id; ++i) {
+                int             fd;
+                fd = fd_cp[i][0];
+                if (fd == -1) {
+                    continue;
+                }
+                FD_SET(fd, &read_fds);
+                fdmax = max(fdmax, fd);
             }
-            read_fds = master;
+            ++fdmax;
+
             select(fdmax, &read_fds, NULL, NULL, &tv);
-            log_info("%d:\tisunblockded", tag);
-            // log_info("The root is unblocked");
-            // for (i = 0; i < fdmax; ++i) {
-            // if (FD_ISSET(i, &read_fds)) {
+
+            log_info("%d:\tis unblockded", tag);
             t = 0;
             for (i = 0; i < child_id; ++i) {
-                log_info("%d is inspectin %d", tag, i);
-                log_info("%d is inspectin fd %d", tag, fd_cp[i][0]);
-                if (num_children_created == 0) {
-                    break;
-                }
-                log_info("%d is still inspectin %d", tag, i);
-                // printf("%d %d\n", FD_ISSET(13, &read_fds), FD_ISSET(11, 
-                // &read_fds));
-                if (FD_ISSET(fd_cp[i][0], &read_fds)) {
-                    log_info("%d is inspectin fd %d", tag, fd_cp[i][0]);
+                int             fd = fd_cp[i][0];
+                if (FD_ISSET(fd, &read_fds)) {
                     ++t;
                     child_tag = child_id_to_tag[i];
                     log_info
-                        ("%d is reading data at the offset: %d from: %d through: %d",
-                         tag, offset_table[i], i, fd_cp[i][0]);
+                        ("%d:\tReading %d elements, offset %d, from: %d",
+                         tag, size_table[i], offset_table[i], i);
                     num_ints_read =
-                        read_all_ints(fd_cp[i][0],
+                        read_all_ints(fd,
                                       buffer + offset_table[i],
                                       size_table[i]);
                     check(num_ints_read != -1, "Panic %d, %d %d", tag,
@@ -308,9 +298,9 @@ quickPipe(int A[], int n, int p)
                           size_table[i]);
                     size += num_ints_read;
                     log_info
-                        ("%d has read %ld bytes of data from %d to position %d. Now root has %d elements",
-                         tag, num_ints_read, i, offset_table[i], size);
-                    // printArray(A, n);
+                        ("%d\tHas read %ld elements from %d at offset %d:",
+                         tag, num_ints_read, i, offset_table[i]);
+                    printArray(buffer + offset_table[i], size_table[i]);
                     // wait(NULL);
                     CLOSEFD(fd_cp[i][0]);
                     --num_children_created;
@@ -325,11 +315,10 @@ quickPipe(int A[], int n, int p)
     }
 
     if (tag != 0) {
-        log_info("%d is sending %d elements to its parent", tag, size);
+        log_info("%d:\tSending %d elements to its parent", tag, size);
         num_ints_written = write_all_ints(fd_reply, buffer, size);
         check(num_ints_written == size, "Cannot write to %d", fd_reply);
-        log_info("%d has sent %d elements to its parent %d", tag, size,
-                 fd_reply);
+        log_info("%d:\tSent %d elements to its parent", tag, size);
     }
 
     for (i = 0; i < p; ++i) {
@@ -347,11 +336,11 @@ quickPipe(int A[], int n, int p)
         --num_children_created;
     }
     if (tag == 0) {
-        // printArray(A, n);
-
+        printArray(A, n);
         return;
     } else {
-        _exit(EXIT_SUCCESS);
+        // _exit(EXIT_SUCCESS);
+        return;
     }
 
 

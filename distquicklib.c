@@ -280,6 +280,9 @@ quickPipe(int A[], int n, int p)
             t = 0;
             for (i = 0; i < child_id; ++i) {
                 int             fd = fd_cp[i][0];
+                if (fd == -1 || fd >= fdmax) {
+                    continue;
+                }
                 if (FD_ISSET(fd, &read_fds)) {
                     ++t;
                     child_tag = child_id_to_tag[i];
@@ -339,8 +342,7 @@ quickPipe(int A[], int n, int p)
         printArray(A, n);
         return;
     } else {
-        // _exit(EXIT_SUCCESS);
-        return;
+        _exit(EXIT_SUCCESS);
     }
 
 

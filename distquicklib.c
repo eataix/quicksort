@@ -194,7 +194,8 @@ quickPipe(int A[], int n, int p)
 
             log_info
                 ("%d:\tPrepare to receive %d elements.", tag, right_size);
-            num_ints_read = read_all_ints(fd_pc[child_id][0], buffer, right_size);
+            num_ints_read =
+                read_all_ints(fd_pc[child_id][0], buffer, right_size);
             check(num_ints_read != -1,
                   "The child cannot read from the parent");
             log_info("%d:\tReceived: %ld.", tag, num_ints_read);
@@ -227,8 +228,9 @@ quickPipe(int A[], int n, int p)
             last_tag_used = new_tag;
             size = left_size;
 
-            num_ints_written = write_all_ints(fd_pc[child_id][1], &buffer[m + 1],
-                                              right_size);
+            num_ints_written =
+                write_all_ints(fd_pc[child_id][1], &buffer[m + 1],
+                               right_size);
             check(num_ints_written != -1,
                   "%d:\tCannot write %d to the pipe.", tag, left_size);
             log_info("%d:\tHas sent %d elments to %d", tag, right_size,
@@ -305,8 +307,7 @@ quickPipe(int A[], int n, int p)
                           child_tag, fd_cp[i][0]);
                     check(num_ints_read == size_table[i],
                           "In %d %d Cannot read from %d. Is %ld, should be %d",
-                          tag, i, child_tag, num_ints_read ,
-                          size_table[i]);
+                          tag, i, child_tag, num_ints_read, size_table[i]);
                     size += num_ints_read;
                     log_info
                         ("%d\tHas read %ld elements from %d at offset %d:",
@@ -364,13 +365,14 @@ quickPipe(int A[], int n, int p)
     }
 }
 
-static inline in_port_t get_in_port(struct sockaddr *sa)
+static inline in_port_t
+get_in_port(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET) {
-        return (((struct sockaddr_in*)sa)->sin_port);
+        return (((struct sockaddr_in *) sa)->sin_port);
     }
 
-    return (((struct sockaddr_in6*)sa)->sin6_port);
+    return (((struct sockaddr_in6 *) sa)->sin6_port);
 }
 
 // distributed quick sort using sockets
@@ -412,7 +414,7 @@ quickSocket(int A[], int n, int p)
                    *servinfo,
                    *ptr;
     struct sockaddr_storage info;
-    socklen_t info_len;
+    socklen_t       info_len;
 
     // Status code
     ssize_t         num_ints_read,
@@ -421,7 +423,8 @@ quickSocket(int A[], int n, int p)
     int             offset_table[k],
                     size_table[k];
 
-    char port_buf[16];  // must write port number into a string for execl()
+    char            port_buf[16];       // must write port number into a
+                                        // string for execl()
 
     num_children_created = 0;
 
@@ -461,15 +464,18 @@ quickSocket(int A[], int n, int p)
             optval = 1;
             for (ptr = servinfo; ptr != NULL; ptr = ptr->ai_next) {
                 fd_listener = socket(ptr->ai_family, ptr->ai_socktype,
-                         ptr->ai_protocol);
+                                     ptr->ai_protocol);
                 if (fd_listener == -1) {
                     continue;
                 }
-                if (setsockopt(fd_listener, SOL_SOCKET, SO_REUSEADDR, &optval,
-                               sizeof(optval)) == -1) {
+                if (setsockopt
+                    (fd_listener, SOL_SOCKET, SO_REUSEADDR, &optval,
+                     sizeof(optval)) == -1) {
                     continue;
                 }
-                if (bind(fd_listener, servinfo->ai_addr, servinfo->ai_addrlen) == -1) {
+                if (bind
+                    (fd_listener, servinfo->ai_addr,
+                     servinfo->ai_addrlen) == -1) {
                     close(fd_listener);
                     continue;
                 }
@@ -482,8 +488,9 @@ quickSocket(int A[], int n, int p)
             }
             check(ptr != NULL, "Failed to bind\n");
             info_len = sizeof info;
-            getsockname(fd_listener, (struct sockaddr*)&info, &info_len);
-            sprintf(port_buf, "%d", ntohs(get_in_port((struct sockaddr*)&info)));
+            getsockname(fd_listener, (struct sockaddr *) &info, &info_len);
+            sprintf(port_buf, "%d",
+                    ntohs(get_in_port((struct sockaddr *) &info)));
             log_info("%d:\tListening at %s", tag, port_buf);
         }
 
@@ -505,12 +512,14 @@ quickSocket(int A[], int n, int p)
             hints.ai_family = AF_UNSPEC;
             hints.ai_socktype = SOCK_STREAM;
             log_info("Connection to %s", port_buf);
-            check(getaddrinfo("localhost", port_buf, &hints, &servinfo) == 0,
-                    "cannot getaddrinfo");
+            check(getaddrinfo("localhost", port_buf, &hints, &servinfo) ==
+                  0, "cannot getaddrinfo");
             optval = 1;
             for (ptr = servinfo; ptr != NULL; ptr = ptr->ai_next) {
                 log_info("Connection to %s", port_buf);
-                fd_c = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+                fd_c =
+                    socket(ptr->ai_family, ptr->ai_socktype,
+                           ptr->ai_protocol);
                 if (fd_c == -1) {
                     continue;
                 }
@@ -623,8 +632,8 @@ quickSocket(int A[], int n, int p)
                         ("%d:\tReading %d elements, offset %d, from: %d",
                          tag, size_table[i], offset_table[i], i);
                     num_ints_read = read_all_ints(fd,
-                                      buffer + offset_table[i],
-                                      size_table[i]);
+                                                  buffer + offset_table[i],
+                                                  size_table[i]);
                     check(num_ints_read == size_table[i],
                           "In %d %d Cannot read from %d. Is %ld, should be %d",
                           tag, i, child_tag, num_ints_read / sizeof(int),
@@ -649,7 +658,8 @@ quickSocket(int A[], int n, int p)
     if (tag != 0) {
         log_info("%d:\tSending %d elements to its parent", tag, size);
         num_ints_written = write_all_ints(fd_reply, buffer, size);
-        check(num_ints_written == size, "%d:\tCannot write to %d", tag, fd_reply);
+        check(num_ints_written == size, "%d:\tCannot write to %d", tag,
+              fd_reply);
         log_info("%d:\tSent %d elements to its parent", tag, size);
     }
 

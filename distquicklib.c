@@ -24,10 +24,16 @@
 #include <sys/socket.h>
 #include <pthread.h>
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+
+
 #include "quicklib.h"
 #include "distquicklib.h"
 #include "dbg.h"
 #include "utils.h"
+
 
 /*
  * Macros
@@ -126,7 +132,7 @@ quickPipe(int A[], int n, int p)
     int             child_id_to_tag[k];
 
     // File descriptors
-    int             fd_pc[2],
+    int             fd_pc[k][2],
                     fd_cp[k][2],
                     fd_reply;
 
@@ -138,8 +144,6 @@ quickPipe(int A[], int n, int p)
                     size_table[k];
 
     num_children_created = 0;
-    fd_pc[0] = -1;
-    fd_pc[1] = -1;
     fd_reply = -1;
 
     size = n;
@@ -162,18 +166,14 @@ quickPipe(int A[], int n, int p)
         left_size = m + 1;
         right_size = size - m - 1;
         index = m + 1;
+
         // Do not be absurd.
         if (left_size <= 0 || right_size <= 0) {
             break;
         }
 
-        check(pipe(fd_pc) == 0, "%d:\tCannot pipe().", tag);
-
-        if (child_id == 0) {
-            for (i = 0; i < k; ++i) {
-                check(pipe(fd_cp[i]) == 0, "%d:\tCannot pipe().", tag);
-            }
-        }
+        check(pipe(fd_cp[child_id]) == 0, "%d:\tCannot pipe().", tag);
+        check(pipe(fd_pc[child_id]) == 0, "%d:\tCannot pipe().", tag);
 
         log_info("%d:\tPrepare to create %d", tag, new_tag);
 
@@ -194,7 +194,7 @@ quickPipe(int A[], int n, int p)
 
             log_info
                 ("%d:\tPrepare to receive %d elements.", tag, right_size);
-            num_ints_read = read_all_ints(fd_pc[0], buffer, right_size);
+            num_ints_read = read_all_ints(fd_pc[child_id][0], buffer, right_size);
             check(num_ints_read != -1,
                   "The child cannot read from the parent");
             log_info("%d:\tReceived: %ld.", tag, num_ints_read);
@@ -202,13 +202,15 @@ quickPipe(int A[], int n, int p)
 
             // file descriptors
             fd_reply = dup(fd_cp[child_id][1]);
+
+            // The child cannot reuse any filedescriptor except
+            // fd_cp[child_id][1]
             for (i = 0; i < k; ++i) {
                 CLOSEFD(fd_cp[i][1]);
                 CLOSEFD(fd_cp[i][0]);
+                CLOSEFD(fd_pc[i][1]);
+                CLOSEFD(fd_pc[i][0]);
             }
-
-            CLOSEFD(fd_pc[1]);
-            CLOSEFD(fd_pc[0]);
 
             child_id = 0;
             num_children_created = 0;
@@ -225,15 +227,16 @@ quickPipe(int A[], int n, int p)
             last_tag_used = new_tag;
             size = left_size;
 
-            num_ints_written = write_all_ints(fd_pc[1], &buffer[m + 1],
+            num_ints_written = write_all_ints(fd_pc[child_id][1], &buffer[m + 1],
                                               right_size);
             check(num_ints_written != -1,
                   "%d:\tCannot write %d to the pipe.", tag, left_size);
             log_info("%d:\tHas sent %d elments to %d", tag, right_size,
                      new_tag);
 
-            CLOSEFD(fd_pc[0]);
-            CLOSEFD(fd_pc[1]);
+            CLOSEFD(fd_pc[child_id][0]);
+            CLOSEFD(fd_pc[child_id][1]);
+            CLOSEFD(fd_cp[child_id][1]);
             ++num_children_created;
             ++child_id;
             break;
@@ -242,7 +245,12 @@ quickPipe(int A[], int n, int p)
     }
 
     for (i = 0; i < k; ++i) {
+        CLOSEFD(fd_pc[i][0]);
+        CLOSEFD(fd_pc[i][1]);
         CLOSEFD(fd_cp[i][1]);
+        if (tag % 2 != 0) {
+            CLOSEFD(fd_cp[i][0]);
+        }
     }
 
     quickSort(buffer, size);
@@ -324,20 +332,16 @@ quickPipe(int A[], int n, int p)
         log_info("%d:\tSent %d elements to its parent", tag, size);
     }
 
-    for (i = 0; i < p; ++i) {
-        fd_pc[0] = -1;
-        fd_pc[1] = -1;
-        fd_cp[i][0] = -1;
-        fd_cp[i][1] = -1;
-    }
 
     if (buffer != A)
         free(buffer);
 
-    while (num_children_created != 0) {
+    while (child_id != 0) {
+        log_info("%d:\tWaiting, still has %d children", tag, child_id);
         wait(NULL);
-        --num_children_created;
+        --child_id;
     }
+
     if (tag == 0) {
         printArray(A, n);
         return;
@@ -345,13 +349,12 @@ quickPipe(int A[], int n, int p)
         _exit(EXIT_SUCCESS);
     }
 
-
   error:
-    for (i = 0; i < p; ++i) {
-        fd_pc[0] = -1;
-        fd_pc[1] = -1;
-        fd_cp[i][0] = -1;
-        fd_cp[i][1] = -1;
+    for (i = 0; i < k; ++i) {
+        CLOSEFD(fd_pc[i][0]);
+        CLOSEFD(fd_pc[i][1]);
+        CLOSEFD(fd_cp[i][0]);
+        CLOSEFD(fd_cp[i][1]);
     }
 
     if (tag == 0) {

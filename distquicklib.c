@@ -111,9 +111,7 @@ quickPipe(int A[], int n, int p)
     int             index,
                     left_size,
                     right_size,
-                   *buffer,
                     i,
-                    size,
                     tag,
                     last_tag_used,
                     new_tag,
@@ -125,31 +123,31 @@ quickPipe(int A[], int n, int p)
     int             fdmax;
     fd_set          read_fds;
 
-    setbuf(stdout, NULL);
 
     int             k = lg2(p);
 
-    int             child_id_to_tag[k];
-
     // File descriptors
-    int             fd_pc[k][2],
-                    fd_cp[k][2],
+    int             fd_cp[k][2],
                     fd_reply;
 
     // Status code
     ssize_t         num_ints_read,
                     num_ints_written;
 
-    int             offset_table[k],
+    int             child_id_to_tag[k],
+                    offset_table[k],
                     size_table[k];
 
-    num_children_created = 0;
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+
     fd_reply = -1;
+    for (i = 0; i < k; ++i) {
+        fd_cp[i][0] = -1;
+        fd_cp[i][1] = -1;
+    }
 
-    size = n;
-    buffer = A;
     child_id = 0;
-
     tag = 0;
     last_tag_used = p + 1;
 
@@ -157,15 +155,11 @@ quickPipe(int A[], int n, int p)
     printArray(A, n);
 
     while (p != 1) {
-        // Be practical!
-        // if (size <= 10) {
-        // break;
-        // }
         new_tag = (tag + last_tag_used) / 2;
-        m = partition(buffer, size);
-        left_size = m + 1;
-        right_size = size - m - 1;
+        m = partition(A, n);
         index = m + 1;
+        left_size = m + 1;
+        right_size = n - m - 1;
 
         // Do not be absurd.
         if (left_size <= 0 || right_size <= 0) {
@@ -173,7 +167,6 @@ quickPipe(int A[], int n, int p)
         }
 
         check(pipe(fd_cp[child_id]) == 0, "%d:\tCannot pipe().", tag);
-        check(pipe(fd_pc[child_id]) == 0, "%d:\tCannot pipe().", tag);
 
         log_info("%d:\tPrepare to create %d", tag, new_tag);
 
@@ -181,102 +174,61 @@ quickPipe(int A[], int n, int p)
         case -1:
             log_warn("Cannot fork()");
             goto error;
-            // break;
         case 0:
-            log_info("%d:\tIs created.", new_tag);
-
             // Information
             tag = new_tag;
-            size = right_size;
 
-            buffer = malloc(right_size * sizeof(int));
-            check_mem(buffer);
+            A = &A[index];
+            n = right_size;
 
-            log_info
-                ("%d:\tPrepare to receive %d elements.", tag, right_size);
-            num_ints_read =
-                read_all_ints(fd_pc[child_id][0], buffer, right_size);
-            check(num_ints_read != -1,
-                  "The child cannot read from the parent");
-            log_info("%d:\tReceived: %ld.", tag, num_ints_read);
-            printArray(buffer, right_size);
-
-            // file descriptors
             fd_reply = dup(fd_cp[child_id][1]);
 
-            // The child cannot reuse any filedescriptor except
-            // fd_cp[child_id][1]
             for (i = 0; i < k; ++i) {
                 CLOSEFD(fd_cp[i][1]);
                 CLOSEFD(fd_cp[i][0]);
-                CLOSEFD(fd_pc[i][1]);
-                CLOSEFD(fd_pc[i][0]);
             }
 
             child_id = 0;
-            num_children_created = 0;
+            log_info("%d:\tIs created.", new_tag);
+            printArray(A, n);
             break;
 
         default:
             // Parent does this.
             log_info("%d:\tis left with %d elements:", tag, left_size);
-            printArray(buffer, left_size);
 
             size_table[child_id] = right_size;
             offset_table[child_id] = index;
             child_id_to_tag[child_id] = new_tag;
             last_tag_used = new_tag;
-            size = left_size;
 
-            num_ints_written =
-                write_all_ints(fd_pc[child_id][1], &buffer[m + 1],
-                               right_size);
-            check(num_ints_written != -1,
-                  "%d:\tCannot write %d to the pipe.", tag, left_size);
-            log_info("%d:\tHas sent %d elments to %d", tag, right_size,
-                     new_tag);
+            n = left_size;
 
-            CLOSEFD(fd_pc[child_id][0]);
-            CLOSEFD(fd_pc[child_id][1]);
             CLOSEFD(fd_cp[child_id][1]);
-            ++num_children_created;
             ++child_id;
+            printArray(A, n);
             break;
         }
         p /= 2;
     }
 
-    for (i = 0; i < k; ++i) {
-        CLOSEFD(fd_pc[i][0]);
-        CLOSEFD(fd_pc[i][1]);
-        CLOSEFD(fd_cp[i][1]);
-        if (tag % 2 != 0) {
-            CLOSEFD(fd_cp[i][0]);
-        }
-    }
-
-    quickSort(buffer, size);
+    quickSort(A, n);
 
     log_info("%d\tHas done:", tag);
-    printArray(buffer, size);
-
-    struct timeval  tv;
-    tv.tv_sec = 4;
-    tv.tv_usec = 500000;
-    int             t = 0;
+    printArray(A, n);
 
     if (tag % 2 == 0) {
+        num_children_created = child_id;
         if (num_children_created == 0) {
             log_info("%d\tis waiting for reply", tag);
         }
-        // check(fdmax != -1, "Panic");
         while (num_children_created > 0) {
             fdmax = -1;
             FD_ZERO(&read_fds);
             for (i = 0; i < child_id; ++i) {
                 int             fd;
                 fd = fd_cp[i][0];
-                if (fd == -1) {
+                if (fd < 0) {
                     continue;
                 }
                 FD_SET(fd, &read_fds);
@@ -284,58 +236,46 @@ quickPipe(int A[], int n, int p)
             }
             ++fdmax;
 
-            select(fdmax, &read_fds, NULL, NULL, &tv);
+            select(fdmax, &read_fds, NULL, NULL, NULL);
 
             log_info("%d:\tis unblockded", tag);
-            t = 0;
             for (i = 0; i < child_id; ++i) {
                 int             fd = fd_cp[i][0];
                 if (fd == -1 || fd >= fdmax) {
                     continue;
                 }
                 if (FD_ISSET(fd, &read_fds)) {
-                    ++t;
                     child_tag = child_id_to_tag[i];
                     log_info
                         ("%d:\tReading %d elements, offset %d, from: %d",
                          tag, size_table[i], offset_table[i], i);
                     num_ints_read =
                         read_all_ints(fd,
-                                      buffer + offset_table[i],
-                                      size_table[i]);
+                                      A + offset_table[i], size_table[i]);
                     check(num_ints_read != -1, "Panic %d, %d %d", tag,
                           child_tag, fd_cp[i][0]);
                     check(num_ints_read == size_table[i],
                           "In %d %d Cannot read from %d. Is %ld, should be %d",
                           tag, i, child_tag, num_ints_read, size_table[i]);
-                    size += num_ints_read;
+                    n += num_ints_read;
                     log_info
                         ("%d\tHas read %ld elements from %d at offset %d:",
                          tag, num_ints_read, i, offset_table[i]);
-                    printArray(buffer + offset_table[i], size_table[i]);
-                    // wait(NULL);
+                    printArray(A + offset_table[i], size_table[i]);
                     CLOSEFD(fd_cp[i][0]);
                     --num_children_created;
                 }
-            }
-
-            if (t == 0) {
-                log_info("%d is deadlock with elements: %d", tag, size);
-                _exit(EXIT_FAILURE);
             }
         }
     }
 
     if (tag != 0) {
-        log_info("%d:\tSending %d elements to its parent", tag, size);
-        num_ints_written = write_all_ints(fd_reply, buffer, size);
-        check(num_ints_written == size, "Cannot write to %d", fd_reply);
-        log_info("%d:\tSent %d elements to its parent", tag, size);
+        log_info("%d:\tSending %d elements to its parent", tag, n);
+        num_ints_written = write_all_ints(fd_reply, A, n);
+        check(num_ints_written == n, "Cannot write to %d", fd_reply);
+        log_info("%d:\tSent %d elements to its parent", tag,
+                 (int) num_ints_written);
     }
-
-
-    if (buffer != A)
-        free(buffer);
 
     while (child_id != 0) {
         log_info("%d:\tWaiting, still has %d children", tag, child_id);
@@ -352,8 +292,6 @@ quickPipe(int A[], int n, int p)
 
   error:
     for (i = 0; i < k; ++i) {
-        CLOSEFD(fd_pc[i][0]);
-        CLOSEFD(fd_pc[i][1]);
         CLOSEFD(fd_cp[i][0]);
         CLOSEFD(fd_cp[i][1]);
     }
@@ -365,7 +303,7 @@ quickPipe(int A[], int n, int p)
     }
 }
 
-static inline in_port_t
+static inline   in_port_t
 get_in_port(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET) {
@@ -397,6 +335,7 @@ quickSocket(int A[], int n, int p)
     fd_set          read_fds;
 
     setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
 
     int             k = lg2(p);
 
@@ -424,7 +363,7 @@ quickSocket(int A[], int n, int p)
                     size_table[k];
 
     char            port_buf[16];       // must write port number into a
-                                        // string for execl()
+    // string for execl()
 
     num_children_created = 0;
 
@@ -436,7 +375,7 @@ quickSocket(int A[], int n, int p)
     last_tag_used = p + 1;
 
     log_info("Input:");
-    printArray(A, n);
+    // printArray(A, n);
 
     while (p != 1) {
         // Be practical!
@@ -543,7 +482,7 @@ quickSocket(int A[], int n, int p)
             check(num_ints_read != -1,
                   "The child cannot read from the parent");
             log_info("%d:\tReceived: %ld.", tag, num_ints_read);
-            printArray(buffer, right_size);
+            // printArray(buffer, right_size);
 
             CLOSEFD(fd_c);
             CLOSEFD(fd_p);
@@ -559,7 +498,7 @@ quickSocket(int A[], int n, int p)
         default:
             // Parent does this.
             log_info("%d:\tis left with %d elements:", tag, left_size);
-            printArray(buffer, left_size);
+            // printArray(buffer, left_size);
 
             size_table[child_id] = right_size;
             offset_table[child_id] = index;
@@ -590,7 +529,7 @@ quickSocket(int A[], int n, int p)
     quickSort(buffer, size);
 
     log_info("%d\tHas done:", tag);
-    printArray(buffer, size);
+    // printArray(buffer, size);
 
     struct timeval  tv;
     tv.tv_sec = 4;
@@ -642,7 +581,8 @@ quickSocket(int A[], int n, int p)
                     log_info
                         ("%d\tHas read %ld elements from %d at offset %d:",
                          tag, num_ints_read, i, offset_table[i]);
-                    printArray(buffer + offset_table[i], size_table[i]);
+                    // printArray(buffer + offset_table[i],
+                    // size_table[i]);
                     CLOSEFD(fd_reads[i]);
                     --num_children_created;
                 }
@@ -672,7 +612,7 @@ quickSocket(int A[], int n, int p)
     }
 
     if (tag == 0) {
-        printArray(A, n);
+        // printArray(A, n);
         return;
     } else {
         _exit(EXIT_SUCCESS);

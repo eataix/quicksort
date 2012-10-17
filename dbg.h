@@ -21,6 +21,8 @@
 #ifndef __dbg_h__
 #define __dbg_h__
 
+#ifdef DEBUG
+
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -46,5 +48,17 @@
 #define check_mem(A)            check((A), "Out of memory. Cannot allocate memory.")
 
 #define check_debug(A, M, ...)  if(!(A)) { debug(M, ##__VA_ARGS__); errno=0; goto error; }
+
+#else
+
+#define check(A, M, ...)
+
+#define log_info(M, ...)
+
+#define log_warn(M, ...)
+
+#define check_mem(A)
+
+#endif
 
 #endif

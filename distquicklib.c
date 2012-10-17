@@ -44,12 +44,12 @@
 /*
  * Prototypes
  */
-ssize_t         read_all_ints(int fildes, int *buf, int ntimes);
+static ssize_t  read_all_ints(int fildes, int *buf, int ntimes);
 
-ssize_t         write_all_ints(int fildes, int *buf, int ntimes);
+static ssize_t  write_all_ints(int fildes, int *buf, int ntimes);
 
 
-ssize_t
+static          ssize_t
 read_all_ints(int fildes, int *buf, int ntimes)
 {
     int             num_total_ints_read,
@@ -76,7 +76,7 @@ read_all_ints(int fildes, int *buf, int ntimes)
 }
 
 
-ssize_t
+static          ssize_t
 write_all_ints(int fildes, int *buf, int ntimes)
 {
     int             num_total_ints_written,
@@ -231,6 +231,9 @@ quickPipe(int A[], int n, int p)
                 FD_SET(fd, &read_fds);
                 fdmax = max(fdmax, fd);
             }
+
+            check(fdmax != -1, "%d:\tThe file descriptors are messed",
+                  tag);
             ++fdmax;
 
             select(fdmax, &read_fds, NULL, NULL, NULL);
@@ -507,7 +510,7 @@ quickSocket(int A[], int n, int p)
     printArray(A, n);
 
     if (tag % 2 == 0) {
-        num_children_created  = child_id;
+        num_children_created = child_id;
         while (num_children_created > 0) {
             fdmax = -1;
             FD_ZERO(&read_fds);
@@ -520,6 +523,8 @@ quickSocket(int A[], int n, int p)
                 FD_SET(fd, &read_fds);
                 fdmax = max(fdmax, fd);
             }
+            check(fdmax != -1, "%d:\tThe file descriptors are messed",
+                  tag);
             ++fdmax;
 
             select(fdmax, &read_fds, NULL, NULL, NULL);
@@ -558,7 +563,8 @@ quickSocket(int A[], int n, int p)
         num_ints_written = write_all_ints(fd_reply, A, n);
         check(num_ints_written == n, "%d:\tCannot write to %d", tag,
               fd_reply);
-        log_info("%d:\tSent %d elements to its parent", tag, (int)num_ints_written);
+        log_info("%d:\tSent %d elements to its parent", tag,
+                 (int) num_ints_written);
     }
 
     while (child_id != 0) {

@@ -21,7 +21,6 @@
 #ifndef __dbg_h__
 #define __dbg_h__
 
-#ifdef DEBUG
 
 #include <errno.h>
 #include <stdio.h>
@@ -39,7 +38,11 @@
 
 #define log_warn(M, ...)        fprintf(stderr, "[WARN] (%s:%d: errno: %s) " M "\n", __FILE__, __LINE__, clean_errno(), ##__VA_ARGS__)
 
+#ifdef DEBUG
 #define log_info(M, ...)        fprintf(stderr, "[INFO] (%s:%d) " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#else 
+#define log_info(M, ...)
+#endif
 
 #define check(A, M, ...)        if(!(A)) { log_err(M, ##__VA_ARGS__); errno=0; goto error; }
 
@@ -48,17 +51,5 @@
 #define check_mem(A)            check((A), "Out of memory. Cannot allocate memory.")
 
 #define check_debug(A, M, ...)  if(!(A)) { debug(M, ##__VA_ARGS__); errno=0; goto error; }
-
-#else
-
-#define check(A, M, ...)
-
-#define log_info(M, ...)
-
-#define log_warn(M, ...)
-
-#define check_mem(A)
-
-#endif
 
 #endif

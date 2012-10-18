@@ -122,196 +122,53 @@ quickPipe(int A[], int n, int p)
     int             index,
                     left_size,
                     right_size,
-                    i,
-                    tag,
-                    last_tag_used,
-                    new_tag,
-                    m,
-                    num_children_created,
-                    child_id,
-                    child_tag;
-
-    int             fdmax;
-    fd_set          read_fds;
-
-
-    int             k = lg2(p);
-
-    // File descriptors
-    int             fd_cp[k][2],
-                    fd_reply;
+                    m;
 
     // Status code
     ssize_t         num_ints_read,
                     num_ints_written;
-
-    int             child_id_to_tag[k],
-                    offset_table[k],
-                    size_table[k];
+    int             fd_cp[2];
 
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
 
-    fd_reply = -1;
-    for (i = 0; i < k; ++i) {
-        fd_cp[i][0] = -1;
-        fd_cp[i][1] = -1;
-    }
-
-    child_id = 0;
-    tag = 0;
-    last_tag_used = p + 1;
-
     log_info("Input:");
     debug_printArray(A, n);
 
-    while (p != 1) {
-        new_tag = (tag + last_tag_used) / 2;
+    if (p == 1) {
+        quickSort(A, n);
+    } else {
         m = partition(A, n);
         index = m + 1;
         left_size = m + 1;
         right_size = n - m - 1;
 
-        // Do not be absurd.
-        if (left_size <= 0 || right_size <= 0) {
-            break;
-        }
-
-        check(pipe(fd_cp[child_id]) == 0, "%d:\tCannot pipe().", tag);
-
-        log_info("%d:\tPrepare to create %d", tag, new_tag);
+        check(pipe(fd_cp) == 0, "Cannot pipe().");
 
         switch (fork()) {
         case -1:
             log_warn("Cannot fork()");
             goto error;
         case 0:
-            // Information
-            tag = new_tag;
-
-            A = &A[index];
-            n = right_size;
-
-            fd_reply = dup(fd_cp[child_id][1]);
-
-            for (i = 0; i < k; ++i) {
-                CLOSEFD(fd_cp[i][1]);
-                CLOSEFD(fd_cp[i][0]);
-            }
-
-            child_id = 0;
-            log_info("%d:\tIs created.", new_tag);
-            debug_printArray(A, n);
+            quickPipe(&A[index], right_size, p / 2);
+            num_ints_written =
+                write_all_ints(fd_cp[1], &A[index], right_size);
+            check(num_ints_written == right_size, "Cannot write.");
+            _exit(0);
             break;
-
         default:
-            // Parent does this.
-            log_info("%d:\tis left with %d elements:", tag, left_size);
-
-            size_table[child_id] = right_size;
-            offset_table[child_id] = index;
-            child_id_to_tag[child_id] = new_tag;
-            last_tag_used = new_tag;
-
-            n = left_size;
-
-            CLOSEFD(fd_cp[child_id][1]);
-            ++child_id;
-            debug_printArray(A, n);
+            quickPipe(A, left_size, p / 2);
+            num_ints_read = read_all_ints(fd_cp[0], &A[index], right_size);
+            check(num_ints_read == right_size, "Cannot read.");
+            wait(NULL);
             break;
         }
-        p /= 2;
     }
 
-    quickSort(A, n);
-
-    log_info("%d\tHas done:", tag);
-    debug_printArray(A, n);
-
-    if (tag % 2 == 0) {
-        num_children_created = child_id;
-        while (num_children_created > 0) {
-            fdmax = -1;
-            FD_ZERO(&read_fds);
-            for (i = 0; i < child_id; ++i) {
-                int             fd;
-                fd = fd_cp[i][0];
-                if (fd < 0) {
-                    continue;
-                }
-                FD_SET(fd, &read_fds);
-                fdmax = max(fdmax, fd);
-            }
-
-            check(fdmax != -1, "%d:\tThe file descriptors are messed",
-                  tag);
-            ++fdmax;
-
-            select(fdmax, &read_fds, NULL, NULL, NULL);
-
-            log_info("%d:\tis unblockded", tag);
-            for (i = 0; i < child_id; ++i) {
-                int             fd = fd_cp[i][0];
-                if (fd == -1 || fd >= fdmax) {
-                    continue;
-                }
-                if (FD_ISSET(fd, &read_fds)) {
-                    child_tag = child_id_to_tag[i];
-                    log_info
-                        ("%d:\tReading %d elements, offset %d, from: %d",
-                         tag, size_table[i], offset_table[i], i);
-                    num_ints_read =
-                        read_all_ints(fd,
-                                      A + offset_table[i], size_table[i]);
-                    check(num_ints_read != -1, "Panic %d, %d %d", tag,
-                          child_tag, fd_cp[i][0]);
-                    check(num_ints_read == size_table[i],
-                          "In %d %d Cannot read from %d. Is %ld, should be %d",
-                          tag, i, child_tag, num_ints_read, size_table[i]);
-                    n += num_ints_read;
-                    log_info
-                        ("%d\tHas read %ld elements from %d at offset %d:",
-                         tag, num_ints_read, i, offset_table[i]);
-                    debug_printArray(A + offset_table[i], size_table[i]);
-                    CLOSEFD(fd_cp[i][0]);
-                    --num_children_created;
-                }
-            }
-        }
-    }
-
-    if (tag != 0) {
-        log_info("%d:\tSending %d elements to its parent", tag, n);
-        num_ints_written = write_all_ints(fd_reply, A, n);
-        check(num_ints_written == n, "Cannot write to %d", fd_reply);
-        log_info("%d:\tSent %d elements to its parent", tag,
-                 (int) num_ints_written);
-    }
-
-    while (child_id != 0) {
-        log_info("%d:\tWaiting, still has %d children", tag, child_id);
-        wait(NULL);
-        --child_id;
-    }
-
-    if (tag == 0) {
-        debug_printArray(A, n);
-        return;
-    } else {
-        _exit(EXIT_SUCCESS);
-    }
+    return;
 
   error:
-    for (i = 0; i < k; ++i) {
-        CLOSEFD(fd_cp[i][0]);
-        CLOSEFD(fd_cp[i][1]);
-    }
-
-    if (tag == 0) {
-        return;
-    } else {
-        _exit(EXIT_FAILURE);
-    }
+    return;
 }
 
 static inline   in_port_t
@@ -331,32 +188,16 @@ quickSocket(int A[], int n, int p)
     int             index,
                     left_size,
                     right_size,
-                    i,
-                    tag,
-                    last_tag_used,
-                    new_tag,
-                    m,
-                    num_children_created,
-                    child_id,
-                    child_tag;
-
-    int             fdmax;
-    fd_set          read_fds;
+                    m;
 
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
 
-    int             k = lg2(p);
-
-    int             child_id_to_tag[k];
-
     // File descriptors
     int             fd_listener,
-                    fd_reads[k],
                     fd_p,
                     fd_c,
-                    optval,
-                    fd_reply;
+                    optval;
 
     struct addrinfo hints,
                    *servinfo,
@@ -368,76 +209,50 @@ quickSocket(int A[], int n, int p)
     ssize_t         num_ints_read,
                     num_ints_written;
 
-    int             offset_table[k],
-                    size_table[k];
-
     char            port_buf[16];       // must write port number into a
 
-    child_id = 0;
-
-    tag = 0;
-    last_tag_used = p + 1;
-
-    log_info("Input:");
-    debug_printArray(A, n);
-
-    while (p != 1) {
-        // Be practical!
-        // if (size <= 10) {
-        // break;
-        // }
-        new_tag = (tag + last_tag_used) / 2;
+    if (p == 1) {
+        quickSort(A, n);
+    } else {
         m = partition(A, n);
         index = m + 1;
         left_size = m + 1;
         right_size = n - m - 1;
-        // Do not be absurd.
-        if (left_size <= 0 || right_size <= 0) {
+
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = AI_PASSIVE;
+        check(getaddrinfo("localhost", NULL, &hints, &servinfo) == 0,
+              "cannot getaddrinfo");
+
+        optval = 1;
+        for (ptr = servinfo; ptr != NULL; ptr = ptr->ai_next) {
+            fd_listener = socket(ptr->ai_family, ptr->ai_socktype,
+                                 ptr->ai_protocol);
+            if (fd_listener == -1) {
+                continue;
+            }
+            if (setsockopt(fd_listener, SOL_SOCKET, SO_REUSEADDR, &optval,
+                           sizeof(optval)) == -1) {
+                continue;
+            }
+            if (bind(fd_listener, servinfo->ai_addr, servinfo->ai_addrlen)
+                == -1) {
+                close(fd_listener);
+                continue;
+            }
+            if (listen(fd_listener, 2) == -1) {
+                close(fd_listener);
+                continue;
+            }
             break;
         }
-
-        if (child_id == 0) {
-            memset(&hints, 0, sizeof(hints));
-            hints.ai_family = AF_UNSPEC;
-            hints.ai_socktype = SOCK_STREAM;
-            hints.ai_flags = AI_PASSIVE;
-            check(getaddrinfo("localhost", NULL, &hints, &servinfo) == 0,
-                  "cannot getaddrinfo");
-
-            optval = 1;
-            for (ptr = servinfo; ptr != NULL; ptr = ptr->ai_next) {
-                fd_listener = socket(ptr->ai_family, ptr->ai_socktype,
-                                     ptr->ai_protocol);
-                if (fd_listener == -1) {
-                    continue;
-                }
-                if (setsockopt
-                    (fd_listener, SOL_SOCKET, SO_REUSEADDR, &optval,
-                     sizeof(optval)) == -1) {
-                    continue;
-                }
-                if (bind
-                    (fd_listener, servinfo->ai_addr,
-                     servinfo->ai_addrlen) == -1) {
-                    close(fd_listener);
-                    continue;
-                }
-                if (listen(fd_listener, 2) == -1) {
-                    close(fd_listener);
-                    continue;
-                }
-
-                break;
-            }
-            check(ptr != NULL, "Failed to bind\n");
-            info_len = sizeof info;
-            getsockname(fd_listener, (struct sockaddr *) &info, &info_len);
-            sprintf(port_buf, "%d",
-                    ntohs(get_in_port((struct sockaddr *) &info)));
-            log_info("%d:\tListening at %s", tag, port_buf);
-        }
-
-        log_info("%d:\tPrepare to create %d", tag, new_tag);
+        check(ptr != NULL, "Failed to bind\n");
+        info_len = sizeof info;
+        getsockname(fd_listener, (struct sockaddr *) &info, &info_len);
+        sprintf(port_buf, "%d",
+                ntohs(get_in_port((struct sockaddr *) &info)));
 
         switch (fork()) {
         case -1:
@@ -445,26 +260,17 @@ quickSocket(int A[], int n, int p)
             goto error;
             // break;
         case 0:
-            log_info("%d:\tIs created.", new_tag);
-
-            // Information
-            tag = new_tag;
-
-            A = &A[index];
-            n = right_size;
-
+            quickSocket(&A[index], right_size, p / 2);
             memset(&hints, 0, sizeof(hints));
             hints.ai_family = AF_UNSPEC;
             hints.ai_socktype = SOCK_STREAM;
-            log_info("Connection to %s", port_buf);
-            check(getaddrinfo("localhost", port_buf, &hints, &servinfo) ==
-                  0, "cannot getaddrinfo");
+            check(getaddrinfo("localhost", port_buf, &hints, &servinfo)
+                  == 0, "cannot getaddrinfo");
             optval = 1;
             for (ptr = servinfo; ptr != NULL; ptr = ptr->ai_next) {
                 log_info("Connection to %s", port_buf);
-                fd_c =
-                    socket(ptr->ai_family, ptr->ai_socktype,
-                           ptr->ai_protocol);
+                fd_c = socket(ptr->ai_family, ptr->ai_socktype,
+                              ptr->ai_protocol);
                 if (fd_c == -1) {
                     continue;
                 }
@@ -474,156 +280,46 @@ quickSocket(int A[], int n, int p)
                 }
                 break;
             }
-
             check(ptr != NULL, "Cannot connect");
-
-            fd_reply = dup(fd_c);
-
-            debug_printArray(A, n);
-
-            CLOSEFD(fd_c);
-            CLOSEFD(fd_p);
-            CLOSEFD(fd_listener);
-            for (i = 0; i < child_id; ++i) {
-                CLOSEFD(fd_reads[i]);
-            }
-
-            child_id = 0;
-            break;
-
+            num_ints_written = write_all_ints(fd_c, &A[index], right_size);
+            _exit(EXIT_SUCCESS);
         default:
-            // Parent does this.
-
-            size_table[child_id] = right_size;
-            offset_table[child_id] = index;
-            child_id_to_tag[child_id] = new_tag;
-            last_tag_used = new_tag;
-
+            quickSocket(A, n, p / 2);
             fd_p = accept(fd_listener, NULL, NULL);
-            check(fd_p != -1, "%d cannot accept()", tag);
-
-            fd_reads[child_id] = dup(fd_p);
-            ++child_id;
-            CLOSEFD(fd_p);
-
-            n = left_size;
-
-            log_info("%d:\tis left with %d elements:", tag, left_size);
-            debug_printArray(A, n);
-            break;
-        }
-        p /= 2;
-    }
-
-    quickSort(A, n);
-
-    log_info("%d\tHas done:", tag);
-    debug_printArray(A, n);
-
-    if (tag % 2 == 0) {
-        num_children_created = child_id;
-        while (num_children_created > 0) {
-            fdmax = -1;
-            FD_ZERO(&read_fds);
-            for (i = 0; i < child_id; ++i) {
-                int             fd;
-                fd = fd_reads[i];
-                if (fd == -1) {
-                    continue;
-                }
-                FD_SET(fd, &read_fds);
-                fdmax = max(fdmax, fd);
-            }
-            check(fdmax != -1, "%d:\tThe file descriptors are messed",
-                  tag);
-            ++fdmax;
-
-            select(fdmax, &read_fds, NULL, NULL, NULL);
-
-            log_info("%d:\tis unblockded", tag);
-            for (i = 0; i < child_id; ++i) {
-                int             fd = fd_reads[i];
-                if (fd == -1 || fd >= fdmax) {
-                    continue;
-                }
-                if (FD_ISSET(fd, &read_fds)) {
-                    child_tag = child_id_to_tag[i];
-                    log_info
-                        ("%d:\tReading %d elements, offset %d, from: %d",
-                         tag, size_table[i], offset_table[i], i);
-                    num_ints_read = read_all_ints(fd,
-                                                  A + offset_table[i],
-                                                  size_table[i]);
-                    check(num_ints_read == size_table[i],
-                          "In %d %d Cannot read from %d. Is %ld, should be %d",
-                          tag, i, child_tag, num_ints_read, size_table[i]);
-                    n += num_ints_read;
-                    log_info
-                        ("%d\tHas read %ld elements from %d at offset %d:",
-                         tag, num_ints_read, i, offset_table[i]);
-                    debug_printArray(A + offset_table[i], size_table[i]);
-                    CLOSEFD(fd_reads[i]);
-                    --num_children_created;
-                }
-            }
+            num_ints_read = read_all_ints(fd_p, &A[index], right_size);
+            check(num_ints_read == right_size, "Cannot read");
+            return;
         }
     }
-
-    if (tag != 0) {
-        log_info("%d:\tSending %d elements to its parent", tag, n);
-        num_ints_written = write_all_ints(fd_reply, A, n);
-        check(num_ints_written == n, "%d:\tCannot write to %d", tag,
-              fd_reply);
-        log_info("%d:\tSent %d elements to its parent", tag,
-                 (int) num_ints_written);
-    }
-
-    while (child_id != 0) {
-        wait(NULL);
-        --child_id;
-    }
-
-    if (tag == 0) {
-        debug_printArray(A, n);
-        return;
-    } else {
-        _exit(EXIT_SUCCESS);
-    }
-
-
   error:
-    if (tag == 0) {
-        return;
-    } else {
-        _exit(EXIT_FAILURE);
-    }
+    return;
 }
 
 struct info {
-    int tag;
-    int *A;
-    int n;
-    int p;
-    int last_tag_used;
-    int child_id;
+    int             tag;
+    int            *A;
+    int             n;
+    int             p;
+    int             last_tag_used;
+    int             child_id;
     enum WaitMechanismType pWaitMech;
-    pthread_t *children;
+    pthread_t      *children;
 };
 
-static void *
-thread_routine(void * info)
+static void    *
+thread_routine(void *info)
 {
     check(info != NULL, "Invalid argument.");
-    struct info *in = (struct info *)info;
-    int k,
-        m,
-        index,
-        left_size,
-        right_size,
-        thread_created,
-        new_tag;
-    void *res;
-    struct info *ch;
+    struct info    *in = (struct info *) info;
+    int             k,
+                    m,
+                    index,
+                    left_size,
+                    right_size,
+                    thread_created,
+                    new_tag;
+    void           *res;
+    struct info    *ch;
 
     k = lg2(in->p);
 
@@ -648,8 +344,8 @@ thread_routine(void * info)
         ch->last_tag_used = in->last_tag_used;
         ch->pWaitMech = in->pWaitMech;
         check(pthread_create(&(in->children[in->child_id]), NULL,
-                               thread_routine, ch) == 0,
-                             "%d:\tCannot create a new thread", in->tag);
+                             thread_routine, ch) == 0,
+              "%d:\tCannot create a new thread", in->tag);
         // in.tag;
         // in.A;
         in->n = left_size;
@@ -662,7 +358,8 @@ thread_routine(void * info)
 
     switch (in->pWaitMech) {
     case WAIT_JOIN:
-        for (thread_created = in->child_id - 1; thread_created > 0; --thread_created) {
+        for (thread_created = in->child_id - 1; thread_created > 0;
+             --thread_created) {
             check(pthread_join(in->children[thread_created], &res) == 0,
                   "%d:\tCannot pthread_join. %d", in->tag, thread_created);
             // free(in->children[thread_created]);
@@ -678,7 +375,7 @@ thread_routine(void * info)
 
     return NULL;
 
-error:
+  error:
     return NULL;
 }
 
@@ -687,11 +384,11 @@ error:
 void
 quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
 {
-    int k;
+    int             k;
     k = lg2(p);
-    pthread_t root;
-    struct info r;
-    void *res;
+    pthread_t       root;
+    struct info     r;
+    void           *res;
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
     r.tag = 0;
@@ -707,6 +404,6 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
     log_info("The root is created");
     pthread_join(root, &res);
 
-error:
+  error:
     return;
 }

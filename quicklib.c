@@ -2,7 +2,7 @@
  * quicklib: library of provided functions supporting the quicksort for
  * comp2310 assignment 2, 2012
  * 
- * written by Peter Strazdins, RSCS ANU, 09/12 version 1.0 30/10/12 
+ * written by Peter Strazdins, RSCS ANU, 09/12 version 1.1 16/10/12 
  */
 
 #include <stdio.h>
@@ -58,13 +58,10 @@ partition(int A[], int n)
     else if (n < MIN_PIVOT_SEARCH)
         pivot = A[n / 2];
     else {                      // select median from a small portion of
-        // A[] 
+                                // A[] 
         // note: it is essential that partition() be thread-safe for
         // quickThread(),
         // so sA must not be in a static memory area, i.e. be on the stack 
-        // 
-        // 
-        // 
         // 
         int             sz = 2 * lg2(n),
             stride = n / sz,
@@ -76,7 +73,7 @@ partition(int A[], int n)
     }
     i = 0, j = n - 1;
     while (i <= j) {            // invariant: A[lo..i-1] <= pivot <=
-        // A[j+1..hi] 
+                                // A[j+1..hi] 
         while (A[i] < pivot)
             i++;
         while (pivot < A[j])
@@ -88,7 +85,8 @@ partition(int A[], int n)
             j--;
         }
     }                           // while(...) 
-    assert(j >= 0 && j < n);
+    if (j < 0)
+        j = 0;
     return (j);
 }                               // partition()
 
@@ -128,6 +126,13 @@ genArray(int A[], int n, int s)
         A[i] = rand() % MAX_ELT;
 }                               // genArray()
 
+static int
+compint(const void *vx, const void *vy)
+{
+    int             x = *((int *) vx),
+        y = *((int *) vy);
+    return ((x < y) ? -1 : (x > y) ? +1 : 0);
+}
 
 void
 checkArray(int A[], int n, int s)
@@ -137,7 +142,7 @@ checkArray(int A[], int n, int s)
 #ifdef DEBUG
     int             checkPre,
                     checkPost;  // checksums for unsorted and sorted
-    // arrays
+                                // arrays
 #endif
     int             i;
     B = (int *) malloc(n * sizeof(int));
@@ -152,7 +157,7 @@ checkArray(int A[], int n, int s)
     printf("average quick sort call depth = %ld (ideal=%d)\n",
            qCalls == 0 ? 0 : qDepthSum / qCalls, lg2(n));
 #endif
-    quickSort(B, n);            // assumed correct! 
+    qsort(B, n, sizeof(int), compint);
 #ifdef DEBUG
     checkPost = n > 0 ? B[0] : 0;
     nerrs = 0;
@@ -174,7 +179,7 @@ checkArray(int A[], int n, int s)
     free(B);
 }                               // checkArray()
 
-inline void
+void
 printArray(int A[], int n)
 {
     int             i;

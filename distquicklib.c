@@ -44,11 +44,13 @@
 /*
  * Prototypes
  */
-static inline void debug_printArray(int A[], int n);
-
 static ssize_t  read_all_ints(int fildes, int *buf, int ntimes);
 
 static ssize_t  write_all_ints(int fildes, int *buf, int ntimes);
+
+static inline void debug_printArray(int A[], int n);
+
+static inline in_port_t get_in_port(struct sockaddr *sa);
 
 static inline void
 debug_printArray(int A[], int n)
@@ -296,14 +298,10 @@ quickSocket(int A[], int n, int p)
 }
 
 struct info {
-    int             tag;
     int            *A;
     int             n;
     int             p;
-    int             last_tag_used;
-    int             child_id;
     enum WaitMechanismType pWaitMech;
-    pthread_t      *children;
 };
 
 static void    *
@@ -311,70 +309,34 @@ thread_routine(void *info)
 {
     check(info != NULL, "Invalid argument.");
     struct info    *in = (struct info *) info;
-    int             k,
-                    m,
+    int             m,
                     index,
                     left_size,
-                    right_size,
-                    thread_created,
-                    new_tag;
+                    right_size;
+
     void           *res;
-    struct info    *ch;
+    struct info     ch;
+    pthread_t       thread;
+    log_info("A thread is created");
 
-    k = lg2(in->p);
-
-    log_info("%d is initialised.", in->tag);
-
-    debug_printArray(in->A, in->n);
-    in->children = malloc(k * sizeof(pthread_t));
-    check_mem(in->children);
-    in->child_id = 0;
-    while (in->p != 1) {
+    if (in->p == 1) {
+        quickSort(in->A, in->n);
+    } else {
         m = partition(in->A, in->n);
         index = m + 1;
         left_size = m + 1;
         right_size = in->n - m - 1;
-        new_tag = (in->last_tag_used + in->tag) / 2;
-        ch = malloc(sizeof(struct info));
-        memset(ch, 0, sizeof(struct info));
-        ch->tag = new_tag;
-        ch->A = &(in->A[index]);
-        ch->n = right_size;
-        ch->p = in->p / 2;
-        ch->last_tag_used = in->last_tag_used;
-        ch->pWaitMech = in->pWaitMech;
-        check(pthread_create(&(in->children[in->child_id]), NULL,
-                             thread_routine, ch) == 0,
-              "%d:\tCannot create a new thread", in->tag);
-        // in.tag;
-        // in.A;
+        ch.A = &(in->A[index]);
+        ch.n = right_size;
+        ch.p = in->p / 2;
+        check(pthread_create(&thread, NULL, thread_routine, &ch) == 0,
+              "Cannot create thread");
         in->n = left_size;
         in->p /= 2;
-        in->last_tag_used = new_tag;
-        in->child_id += 1;
+        thread_routine(in);
+        pthread_join(thread, &res);
     }
-
-    quickSort(in->A, in->n);
-
-    switch (in->pWaitMech) {
-    case WAIT_JOIN:
-        for (thread_created = in->child_id - 1; thread_created > 0;
-             --thread_created) {
-            check(pthread_join(in->children[thread_created], &res) == 0,
-                  "%d:\tCannot pthread_join. %d", in->tag, thread_created);
-            // free(in->children[thread_created]);
-        }
-        break;
-    case WAIT_MUTEX:
-        // TODO
-        break;
-    case WAIT_MEMLOC:
-        // TODO
-        break;
-    }
-
     return NULL;
-
   error:
     return NULL;
 }
@@ -387,17 +349,15 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
     int             k;
     k = lg2(p);
     pthread_t       root;
-    struct info     r;
     void           *res;
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
-    r.tag = 0;
-    r.A = pA;
-    r.child_id = 0;
-    r.last_tag_used = p + 1;
-    r.n = pn;
-    r.p = p;
-    r.pWaitMech = pWaitMech;
+    struct info     r = {
+        .A = pA,
+        .n = pn,
+        .p = p,
+        .pWaitMech = pWaitMech
+    };
     log_info("%d", (&r)->n);
     check(pthread_create(&root, NULL, thread_routine, &r) == 0,
           "Cannot create the root thread.");

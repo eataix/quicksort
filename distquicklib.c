@@ -303,6 +303,7 @@ struct info {
     int             p;
     int             i;
     int             num_pending_children;
+    int             done;
     pthread_mutex_t mutex;
 };
 
@@ -383,6 +384,7 @@ thread_routine_mutex(void *info)
         thread_routine_mutex(in);
         --(in->num_pending_children);
         check(pthread_mutex_lock(&(ch.mutex)) == 0, "Cannot wait");
+        pthread_mutex_destroy(&(ch.mutex));
     }
 
     if (in->num_pending_children == 0) {
@@ -394,12 +396,60 @@ thread_routine_mutex(void *info)
     return NULL;
 }
 
+static void    *
+thread_routine_mem(void *info)
+{
+    check(info != NULL, "Invalid argument.");
+    struct info    *in = (struct info *) info;
+    int             m,
+                    index,
+                    left_size,
+                    right_size;
+
+    struct info     ch;
+    pthread_t       thread;
+
+    if (in->p == 1) {
+        quickSort(in->A, in->n);
+    } else {
+        m = partition(in->A, in->n);
+        index = m + 1;
+        left_size = m + 1;
+        right_size = in->n - m - 1;
+
+        ch.A = &(in->A[index]);
+        ch.n = right_size;
+        ch.p = in->p / 2;
+        ch.num_pending_children = 0;
+        ch.done = 0;
+        check(pthread_create(&thread, NULL, thread_routine_mem, &ch) ==
+              0, "Cannot create thread");
+
+        in->n = left_size;
+        in->p /= 2;
+
+        ++(in->num_pending_children);
+        thread_routine_mutex(in);
+        --(in->num_pending_children);
+        while (ch.done != 1) {
+            // Spin;
+        }
+    }
+
+    if (in->num_pending_children == 0) {
+        in->done = 1;
+    }
+    return NULL;
+
+  error:
+    return NULL;
+}
+
+
 // concurrent quick sort using pthreads
 void
 quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
 {
-    int             k;
-    k = lg2(p);
     pthread_t       root;
     void           *res;
     setbuf(stdout, NULL);
@@ -409,16 +459,14 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
         .n = pn,
         .p = p,
     };
+
     switch (pWaitMech) {
     case WAIT_JOIN:
-        log_info("%d", (&r)->n);
         check(pthread_create(&root, NULL, thread_routine_join, &r) == 0,
               "Cannot create the root thread.");
-        log_info("The root is created");
         pthread_join(root, &res);
         break;
     case WAIT_MUTEX:
-        log_warn("MUTEX");
         r.num_pending_children = 0;
         check(pthread_mutex_init(&(r.mutex), NULL) == 0,
               "Canot create the mutex for the root");
@@ -426,11 +474,20 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
         check(pthread_create(&root, NULL, thread_routine_mutex, &r) == 0,
               "Cannot create the root thread.");
         check(pthread_mutex_lock(&(r.mutex)) == 0, "Cannot lock");
+        pthread_mutex_destroy(&(r.mutex));
         break;
     case WAIT_MEMLOC:
+        r.done = 0;
+        r.num_pending_children = 0;
+        check(pthread_create(&root, NULL, thread_routine_mem, &r) == 0,
+              "Cannot create the root thread.");
+        while (r.done != 1) {
+        }
         break;
     }
 
-  error:
     return;
+
+  error:
+    exit(EXIT_FAILURE);
 }

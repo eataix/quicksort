@@ -44,9 +44,20 @@
 /*
  * Prototypes
  */
+static inline void debug_printArray(int A[], int n);
+
 static ssize_t  read_all_ints(int fildes, int *buf, int ntimes);
 
 static ssize_t  write_all_ints(int fildes, int *buf, int ntimes);
+
+static inline void
+debug_printArray(int A[], int n)
+{
+#ifdef DEBUG
+    printArray(A, n);
+#endif
+    return;
+}
 
 
 static          ssize_t
@@ -152,7 +163,7 @@ quickPipe(int A[], int n, int p)
     last_tag_used = p + 1;
 
     log_info("Input:");
-    printArray(A, n);
+    debug_printArray(A, n);
 
     while (p != 1) {
         new_tag = (tag + last_tag_used) / 2;
@@ -190,7 +201,7 @@ quickPipe(int A[], int n, int p)
 
             child_id = 0;
             log_info("%d:\tIs created.", new_tag);
-            printArray(A, n);
+            debug_printArray(A, n);
             break;
 
         default:
@@ -206,7 +217,7 @@ quickPipe(int A[], int n, int p)
 
             CLOSEFD(fd_cp[child_id][1]);
             ++child_id;
-            printArray(A, n);
+            debug_printArray(A, n);
             break;
         }
         p /= 2;
@@ -215,7 +226,7 @@ quickPipe(int A[], int n, int p)
     quickSort(A, n);
 
     log_info("%d\tHas done:", tag);
-    printArray(A, n);
+    debug_printArray(A, n);
 
     if (tag % 2 == 0) {
         num_children_created = child_id;
@@ -261,7 +272,7 @@ quickPipe(int A[], int n, int p)
                     log_info
                         ("%d\tHas read %ld elements from %d at offset %d:",
                          tag, num_ints_read, i, offset_table[i]);
-                    printArray(A + offset_table[i], size_table[i]);
+                    debug_printArray(A + offset_table[i], size_table[i]);
                     CLOSEFD(fd_cp[i][0]);
                     --num_children_created;
                 }
@@ -284,7 +295,7 @@ quickPipe(int A[], int n, int p)
     }
 
     if (tag == 0) {
-        printArray(A, n);
+        debug_printArray(A, n);
         return;
     } else {
         _exit(EXIT_SUCCESS);
@@ -368,7 +379,7 @@ quickSocket(int A[], int n, int p)
     last_tag_used = p + 1;
 
     log_info("Input:");
-    printArray(A, n);
+    debug_printArray(A, n);
 
     while (p != 1) {
         // Be practical!
@@ -468,7 +479,7 @@ quickSocket(int A[], int n, int p)
 
             fd_reply = dup(fd_c);
 
-            printArray(A, n);
+            debug_printArray(A, n);
 
             CLOSEFD(fd_c);
             CLOSEFD(fd_p);
@@ -498,7 +509,7 @@ quickSocket(int A[], int n, int p)
             n = left_size;
 
             log_info("%d:\tis left with %d elements:", tag, left_size);
-            printArray(A, n);
+            debug_printArray(A, n);
             break;
         }
         p /= 2;
@@ -507,7 +518,7 @@ quickSocket(int A[], int n, int p)
     quickSort(A, n);
 
     log_info("%d\tHas done:", tag);
-    printArray(A, n);
+    debug_printArray(A, n);
 
     if (tag % 2 == 0) {
         num_children_created = child_id;
@@ -550,7 +561,7 @@ quickSocket(int A[], int n, int p)
                     log_info
                         ("%d\tHas read %ld elements from %d at offset %d:",
                          tag, num_ints_read, i, offset_table[i]);
-                    printArray(A + offset_table[i], size_table[i]);
+                    debug_printArray(A + offset_table[i], size_table[i]);
                     CLOSEFD(fd_reads[i]);
                     --num_children_created;
                 }
@@ -573,7 +584,7 @@ quickSocket(int A[], int n, int p)
     }
 
     if (tag == 0) {
-        printArray(A, n);
+        debug_printArray(A, n);
         return;
     } else {
         _exit(EXIT_SUCCESS);

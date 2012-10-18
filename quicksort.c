@@ -2,7 +2,7 @@
  * quicksort.c: test program for concurrent and distributed quicksort
  * algorithms for COMP2310 Assignment 2, 2012
  * 
- * written by Peter Strazdins, RSCS ANU, 09/12 version 1.0 30/10/12 
+ * written by Peter Strazdins, RSCS ANU, 09/12 version 1.1 16/10/12 
  */
 
 #include <stdio.h>
@@ -19,7 +19,7 @@ void
 paramError(char *msg)
 {
     printf("quicksort: parameter error: %s\n", msg);
-    printf("usage: quicksort [-t|-s|-p] [-v v] n [p [s]]\n");
+    printf("usage: quicksort [-t|-s|-p] [-d] [-v v] n [p [s]]\n");
     exit(1);
 }                               // paramError()
 
@@ -38,7 +38,7 @@ main(int argc, char *argv[])
                     p,
                     s;          // command line parameters
     int             printA;     // records if n was negative on the
-    // command line
+                                // command line
     int            *A;          // storage for array to be sorted
     enum WaitMechanismType threadSync;  // sync method for quickThread() 
 
@@ -50,7 +50,7 @@ main(int argc, char *argv[])
     selectAlg = 0;
     threadSync = WAIT_JOIN;
 
-    while ((optchar = getopt(argc, argv, "+pstv:")) != -1) {
+    while ((optchar = getopt(argc, argv, "+pstv:d")) != -1) {
         // extract next option from the command line 
         int             v = 0;
         switch (optchar) {
@@ -61,6 +61,9 @@ main(int argc, char *argv[])
             break;
         case 't':
             selectAlg = 2;
+            break;
+        case 'd':
+            printA = 1;
             break;
         case 'v':
             if (sscanf(optarg, "%d", &v) != 1 || v < 0 || v > 2)
@@ -77,8 +80,6 @@ main(int argc, char *argv[])
     if (optind >= argc)
         paramError("array length n is missing");
     n = atoi(argv[optind]);
-    if (n < 0)
-        printA = 1, n = -n;
     if (optind + 1 < argc)
         p = atoi(argv[optind + 1]);
     if (optind + 2 < argc)

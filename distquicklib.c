@@ -52,16 +52,32 @@ static inline void debug_printArray(int A[], int n);
 
 static inline in_port_t get_in_port(struct sockaddr *sa);
 
+/**
+ * An interface to the printArray() function.
+ * Very useful while debugging.
+ **/
 static inline void
 debug_printArray(int A[], int n)
 {
 #ifdef DEBUG
     printArray(A, n);
 #endif
-    return;
 }
 
 
+/**
+ * A wrapper function of read(2). The unit of its arguments is ints, not bytes.
+ *
+ * Including this function has two benefits:
+ *
+ * 1. Avoiding putting bytes-to-ints-conversions all over the code.
+ *
+ * 2. One may think read(2) and write(2) fail iff they return -1. Yet, one
+ *    should notice that read(2) and write(2) return the number of bytes which
+ *    were read or written returned upon successful completion. This is very
+ *    likely to happen if one tries to read(2) or write(2) a big chunk of data
+ *    to a socket. This function will attempt to handle the partial read(2).
+ **/
 static          ssize_t
 read_all_ints(int fildes, int *buf, int ntimes)
 {
@@ -89,6 +105,9 @@ read_all_ints(int fildes, int *buf, int ntimes)
 }
 
 
+/**
+ * Ditto
+ **/
 static          ssize_t
 write_all_ints(int fildes, int *buf, int ntimes)
 {
@@ -250,6 +269,7 @@ quickSocket(int A[], int n, int p)
             }
             break;
         }
+
         check(ptr != NULL, "Failed to bind\n");
         info_len = sizeof info;
         getsockname(fd_listener, (struct sockaddr *) &info, &info_len);
@@ -261,6 +281,7 @@ quickSocket(int A[], int n, int p)
             log_warn("Cannot fork()");
             goto error;
             // break;
+
         case 0:
             quickSocket(&A[index], right_size, p / 2);
             memset(&hints, 0, sizeof(hints));
@@ -285,6 +306,7 @@ quickSocket(int A[], int n, int p)
             check(ptr != NULL, "Cannot connect");
             num_ints_written = write_all_ints(fd_c, &A[index], right_size);
             _exit(EXIT_SUCCESS);
+
         default:
             quickSocket(A, n, p / 2);
             fd_p = accept(fd_listener, NULL, NULL);
@@ -304,6 +326,7 @@ struct info {
     int             i;
     int             num_pending_children;
     int             done;
+    pthread_cond_t  doneCond;
     pthread_mutex_t mutex;
 };
 
@@ -422,6 +445,11 @@ thread_routine_mem(void *info)
         ch.p = in->p / 2;
         ch.num_pending_children = 0;
         ch.done = 0;
+        check(pthread_mutex_init(&(ch.mutex), NULL) == 0,
+              "Cannot initialise a mutex");
+        check(pthread_cond_init(&(ch.doneCond), NULL) == 0,
+              "Cannot create a condition.");
+
         check(pthread_create(&thread, NULL, thread_routine_mem, &ch) ==
               0, "Cannot create thread");
 
@@ -431,14 +459,33 @@ thread_routine_mem(void *info)
         ++(in->num_pending_children);
         thread_routine_mutex(in);
         --(in->num_pending_children);
+
+        // You can do a busy waiting if you like.
+        // Yet, I will not do it for the shake of performance.
+        //
+        // while (ch.done != 1) {
+        // // Spin;
+        // }
+        check(pthread_mutex_lock(&(ch.mutex)) == 0, "Cannot lock");
         while (ch.done != 1) {
-            // Spin;
+            check(pthread_cond_wait(&(ch.doneCond), &(ch.mutex)) == 0,
+                  "Cannot");
         }
+        check(pthread_mutex_unlock(&(ch.mutex)) == 0, "Cannot unlock");
+        pthread_cond_destroy(&(ch.doneCond));
+        pthread_mutex_destroy(&(ch.mutex));
     }
 
+
+
     if (in->num_pending_children == 0) {
+        check(pthread_mutex_lock(&(in->mutex)) == 0, "Cannot lock");
         in->done = 1;
+        check(pthread_mutex_unlock(&(in->mutex)) == 0, "Cannot unlock");
+        check(pthread_cond_broadcast(&(in->doneCond)) == 0,
+              "Cannot boradcast");
     }
+
     return NULL;
 
   error:
@@ -461,11 +508,13 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
     };
 
     switch (pWaitMech) {
+
     case WAIT_JOIN:
         check(pthread_create(&root, NULL, thread_routine_join, &r) == 0,
               "Cannot create the root thread.");
         pthread_join(root, &res);
         break;
+
     case WAIT_MUTEX:
         r.num_pending_children = 0;
         check(pthread_mutex_init(&(r.mutex), NULL) == 0,
@@ -476,18 +525,28 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
         check(pthread_mutex_lock(&(r.mutex)) == 0, "Cannot lock");
         pthread_mutex_destroy(&(r.mutex));
         break;
+
     case WAIT_MEMLOC:
-        r.done = 0;
         r.num_pending_children = 0;
+        check(pthread_mutex_init(&(r.mutex), NULL) == 0,
+              "Cannot initialise a mutex");
+        check(pthread_cond_init(&(r.doneCond), NULL) == 0,
+              "Cannot create a condition.");
         check(pthread_create(&root, NULL, thread_routine_mem, &r) == 0,
               "Cannot create the root thread.");
+        check(pthread_mutex_lock(&(r.mutex)) == 0, "locks");
         while (r.done != 1) {
+            check(pthread_cond_wait(&(r.doneCond), &(r.mutex)) == 0,
+                  "Cannot");
         }
+        check(pthread_mutex_unlock(&(r.mutex)) == 0, "unlocks");
+        pthread_cond_destroy(&(r.doneCond));
+        pthread_mutex_destroy(&(r.mutex));
         break;
-    }
 
+    }
     return;
 
   error:
-    exit(EXIT_FAILURE);
+    return;
 }

@@ -1,6 +1,6 @@
 # makefile for comp2310 assignment 2, 2012 
 # written by Peter Strazdins RSCS ANU, 09/12                                   
-# version 1.0 30/10/21
+# version 1.1 16/10/12
 
 # usage: to compile and link the bsystem, use 
 #	make 
@@ -11,25 +11,27 @@
 .SUFFIXES:
 
 OBJS=quicklib.o distquicklib.o
-EXE=quicksort
+EXES=quicksort quicksort-nomc
 
-CC=clang
-CFLAGS=-O2 -Wall -Wextra -g
+CC=gcc
+CFLAGS=-O2 -Wall
 INCLUDEFLAGS=
 ARCHFLAGS=
 
-LDFLAGS=#-lmcheck -lpthread -lm
-# uncomment this if you get the `memory clobbered before allocated block'
-# problem for quickThreads() 
-#LDFLAGS=-lpthread -lm 
+MCFLAGS=-lmcheck
+LDFLAGS=-lpthread -lm
 
-default: $(EXE)
+default: $(EXES)
+
+quicksort-nomc: quicksort.o $(OBJS) 
+	$(CC) $(CFLAGS) -o quicksort-nomc quicksort.o $(OBJS) $(LDFLAGS) 
 
 %: %.o $(OBJS)
-	$(CC) $(CFLAGS) -o $* $*.o $(OBJS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $* $*.o $(OBJS) $(LDFLAGS) $(MCFLAGS)
+
 
 %.o: %.c  
 	$(CC) $(CFLAGS) $(ARCHFLAGS) $(INCLUDEFLAGS) -c $*.c
 
 clean:
-	rm -f $(EXE) *.o
+	rm -f $(EXES) *.o

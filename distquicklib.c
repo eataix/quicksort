@@ -291,7 +291,7 @@ struct info {
     int             p;
     int             i;
     int             num_pending_children;
-    int             done;
+    volatile int    done;
     pthread_mutex_t mutex;
 };
 

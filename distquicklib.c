@@ -192,16 +192,6 @@ quickPipe(int A[], int n, int p)
     return;
 }
 
-static inline   in_port_t
-get_in_port(struct sockaddr *sa)
-{
-    if (sa->sa_family == AF_INET) {
-        return (((struct sockaddr_in *) sa)->sin_port);
-    }
-
-    return (((struct sockaddr_in6 *) sa)->sin6_port);
-}
-
 // distributed quick sort using sockets
 void
 quickSocket(int A[], int n, int p)
@@ -217,20 +207,16 @@ quickSocket(int A[], int n, int p)
     // File descriptors
     int             fd_listener,
                     fd_p,
-                    fd_c,
-                    optval;
-
-    struct addrinfo hints,
-                   *servinfo,
-                   *ptr;
-    struct sockaddr_storage info;
-    socklen_t       info_len;
+                    fd_c;
 
     // Status code
     ssize_t         num_ints_read,
                     num_ints_written;
 
-    char            port_buf[16];       // must write port number into a
+    struct sockaddr_in server;
+    socklen_t       namelen;
+
+    namelen = sizeof(server);
 
     if (p == 1) {
         quickSort(A, n);
@@ -240,81 +226,54 @@ quickSocket(int A[], int n, int p)
         left_size = m + 1;
         right_size = n - m - 1;
 
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_flags = AI_PASSIVE;
-        check(getaddrinfo("localhost", NULL, &hints, &servinfo) == 0,
-              "cannot getaddrinfo");
+        fd_listener = socket(AF_INET, SOCK_STREAM, 0);
+        check(fd_listener != -1, "no socket");
 
-        optval = 1;
-        for (ptr = servinfo; ptr != NULL; ptr = ptr->ai_next) {
-            fd_listener = socket(ptr->ai_family, ptr->ai_socktype,
-                                 ptr->ai_protocol);
-            if (fd_listener == -1) {
-                continue;
-            }
-            if (setsockopt(fd_listener, SOL_SOCKET, SO_REUSEADDR, &optval,
-                           sizeof(optval)) == -1) {
-                continue;
-            }
-            if (bind(fd_listener, servinfo->ai_addr, servinfo->ai_addrlen)
-                == -1) {
-                close(fd_listener);
-                continue;
-            }
-            if (listen(fd_listener, 2) == -1) {
-                close(fd_listener);
-                continue;
-            }
-            break;
-        }
+        server.sin_family = AF_INET;
+        server.sin_port = 0;
+        server.sin_addr.s_addr = INADDR_ANY;
 
-        check(ptr != NULL, "Failed to bind\n");
-        info_len = sizeof info;
-        getsockname(fd_listener, (struct sockaddr *) &info, &info_len);
-        sprintf(port_buf, "%d",
-                ntohs(get_in_port((struct sockaddr *) &info)));
+        check(bind
+              (fd_listener, (struct sockaddr *) &server, sizeof(server))
+              != -1, "Cannot bind(2).");
+        check(getsockname
+              (fd_listener, (struct sockaddr *) &server, &namelen)
+              != -1, "Cannot getsockname(2).");
+        check(listen(fd_listener, 1) == 0, "Cannot listen(2).");
 
         switch (fork()) {
         case -1:
             log_warn("Cannot fork()");
             goto error;
-            // break;
 
         case 0:
+            close(fd_listener);
+
             quickSocket(&A[index], right_size, p / 2);
-            memset(&hints, 0, sizeof(hints));
-            hints.ai_family = AF_UNSPEC;
-            hints.ai_socktype = SOCK_STREAM;
-            check(getaddrinfo("localhost", port_buf, &hints, &servinfo)
-                  == 0, "cannot getaddrinfo");
-            optval = 1;
-            for (ptr = servinfo; ptr != NULL; ptr = ptr->ai_next) {
-                log_info("Connection to %s", port_buf);
-                fd_c = socket(ptr->ai_family, ptr->ai_socktype,
-                              ptr->ai_protocol);
-                if (fd_c == -1) {
-                    continue;
-                }
-                if (connect(fd_c, ptr->ai_addr, ptr->ai_addrlen) == -1) {
-                    CLOSEFD(fd_c);
-                    continue;
-                }
-                break;
-            }
-            check(ptr != NULL, "Cannot connect");
+            fd_c = socket(AF_INET, SOCK_STREAM, 0);
+            check(fd_c != -1, "Cannot create a socket");
+            check(connect
+                  (fd_c, (struct sockaddr *) &server, sizeof(server))
+                  != -1, "Cannot connect");
             num_ints_written = write_all_ints(fd_c, &A[index], right_size);
+            check(num_ints_written == right_size, "Cannot write");
+
+            close(fd_c);
             _exit(EXIT_SUCCESS);
 
         default:
             quickSocket(A, n, p / 2);
+
             fd_p = accept(fd_listener, NULL, NULL);
             num_ints_read = read_all_ints(fd_p, &A[index], right_size);
             check(num_ints_read == right_size, "Cannot read");
+
+            close(fd_listener);
+            close(fd_p);
             return;
         }
     }
+
   error:
     return;
 }

@@ -40,7 +40,7 @@
  */
 #define min(m,n) ((m) < (n) ? (m) : (n))
 #define max(m,n) ((m) > (n) ? (m) : (n))
-
+#define ALLOWANCE ((int)(sizeof(int) * 1000))
 /*
  * Prototypes
  */
@@ -92,7 +92,7 @@ read_all_ints(int fildes, int *buf, int ntimes)
     while (num_total_ints_read < ntimes) {
         bytes_read =
             read(fildes, buf + num_total_ints_read,
-                 sizeof(int) * min(num_ints_left, 20000));
+                 sizeof(int) * min(num_ints_left, ALLOWANCE));
         check(bytes_read > 0, "Cannot read");
         ints_read = bytes_read / sizeof(int);
         num_total_ints_read += ints_read;
@@ -122,7 +122,7 @@ write_all_ints(int fildes, int *buf, int ntimes)
     while (num_total_ints_written < ntimes) {
         bytes_written =
             write(fildes, buf + num_total_ints_written,
-                  sizeof(int) * min(num_ints_left, 10000));
+                  sizeof(int) * min(num_ints_left, ALLOWANCE));
         check(bytes_written > 0, "Cannot write %d", fildes);
         ints_written = bytes_written / sizeof(int);
         num_total_ints_written += ints_written;
@@ -150,11 +150,9 @@ quickPipe(int A[], int n, int p)
                     num_ints_written;
     int             fd_cp[2];
 
+    // So that I do not need to fflush(3).
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
-
-    log_info("Input:");
-    debug_printArray(A, n);
 
     if (p == 1) {
         quickSort(A, n);
@@ -167,20 +165,29 @@ quickPipe(int A[], int n, int p)
         check(pipe(fd_cp) == 0, "Cannot pipe().");
 
         switch (fork()) {
-        case -1:
+        case -1:               // This will happen. Be ready for it.
             log_warn("Cannot fork()");
             goto error;
+
         case 0:
+            close(fd_cp[0]);
+
             quickPipe(&A[index], right_size, p / 2);
             num_ints_written =
                 write_all_ints(fd_cp[1], &A[index], right_size);
             check(num_ints_written == right_size, "Cannot write.");
-            _exit(0);
-            break;
+
+            close(fd_cp[1]);
+            _exit(EXIT_SUCCESS);
+
         default:
+            close(fd_cp[1]);
+
             quickPipe(A, left_size, p / 2);
             num_ints_read = read_all_ints(fd_cp[0], &A[index], right_size);
             check(num_ints_read == right_size, "Cannot read.");
+
+            close(fd_cp[0]);
             wait(NULL);
             break;
         }
@@ -285,14 +292,12 @@ struct info {
     int             i;
     int             num_pending_children;
     int             done;
-    pthread_cond_t  doneCond;
     pthread_mutex_t mutex;
 };
 
 static void    *
 thread_routine_join(void *info)
 {
-    check(info != NULL, "Invalid argument.");
     struct info    *in = (struct info *) info;
     int             m,
                     index,
@@ -302,7 +307,8 @@ thread_routine_join(void *info)
     void           *res;
     struct info     ch;
     pthread_t       thread;
-    log_info("A thread is created");
+
+    check(info != NULL, "Invalid argument.");
 
     if (in->p == 1) {
         quickSort(in->A, in->n);
@@ -322,6 +328,7 @@ thread_routine_join(void *info)
         pthread_join(thread, &res);
     }
     return NULL;
+
   error:
     return NULL;
 }
@@ -329,20 +336,18 @@ thread_routine_join(void *info)
 static void    *
 thread_routine_mutex(void *info)
 {
-    check(info != NULL, "Invalid argument.");
     struct info    *in = (struct info *) info;
     int             m,
                     index,
                     left_size,
                     right_size;
-
-    struct info     ch;
     pthread_t       thread;
+    struct info     ch;
 
-    // log_warn("A thread is created");
+    check(info != NULL, "Invalid argument.");
+
     if (in->p == 1) {
         quickSort(in->A, in->n);
-        log_info("Sorted");
     } else {
         m = partition(in->A, in->n);
         index = m + 1;
@@ -355,6 +360,7 @@ thread_routine_mutex(void *info)
         ch.num_pending_children = 0;
         check(pthread_mutex_init(&(ch.mutex), NULL) == 0,
               "Cannot initialise a mutex");
+
         check(pthread_mutex_lock(&(ch.mutex)) == 0,
               "Cannot acquire the lock");
         check(pthread_create(&thread, NULL, thread_routine_mutex, &ch) ==
@@ -362,9 +368,11 @@ thread_routine_mutex(void *info)
 
         in->n = left_size;
         in->p /= 2;
+
         ++(in->num_pending_children);
         thread_routine_mutex(in);
         --(in->num_pending_children);
+
         check(pthread_mutex_lock(&(ch.mutex)) == 0, "Cannot wait");
         pthread_mutex_destroy(&(ch.mutex));
     }
@@ -387,9 +395,8 @@ thread_routine_mem(void *info)
                     index,
                     left_size,
                     right_size;
-
-    struct info     ch;
     pthread_t       thread;
+    struct info     ch;
 
     if (in->p == 1) {
         quickSort(in->A, in->n);
@@ -404,10 +411,6 @@ thread_routine_mem(void *info)
         ch.p = in->p / 2;
         ch.num_pending_children = 0;
         ch.done = 0;
-        check(pthread_mutex_init(&(ch.mutex), NULL) == 0,
-              "Cannot initialise a mutex");
-        check(pthread_cond_init(&(ch.doneCond), NULL) == 0,
-              "Cannot create a condition.");
 
         check(pthread_create(&thread, NULL, thread_routine_mem, &ch) ==
               0, "Cannot create thread");
@@ -419,30 +422,13 @@ thread_routine_mem(void *info)
         thread_routine_mutex(in);
         --(in->num_pending_children);
 
-        // You can do a busy waiting if you like.
-        // Yet, I will not do it for the shake of performance.
-        //
-        // while (ch.done != 1) {
-        // // Spin;
-        // }
-        check(pthread_mutex_lock(&(ch.mutex)) == 0, "Cannot lock");
         while (ch.done != 1) {
-            check(pthread_cond_wait(&(ch.doneCond), &(ch.mutex)) == 0,
-                  "Cannot");
+            // Spin;
         }
-        check(pthread_mutex_unlock(&(ch.mutex)) == 0, "Cannot unlock");
-        pthread_cond_destroy(&(ch.doneCond));
-        pthread_mutex_destroy(&(ch.mutex));
     }
 
-
-
     if (in->num_pending_children == 0) {
-        check(pthread_mutex_lock(&(in->mutex)) == 0, "Cannot lock");
         in->done = 1;
-        check(pthread_mutex_unlock(&(in->mutex)) == 0, "Cannot unlock");
-        check(pthread_cond_broadcast(&(in->doneCond)) == 0,
-              "Cannot boradcast");
     }
 
     return NULL;
@@ -487,22 +473,13 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
 
     case WAIT_MEMLOC:
         r.num_pending_children = 0;
-        check(pthread_mutex_init(&(r.mutex), NULL) == 0,
-              "Cannot initialise a mutex");
-        check(pthread_cond_init(&(r.doneCond), NULL) == 0,
-              "Cannot create a condition.");
+        r.done = 0;
         check(pthread_create(&root, NULL, thread_routine_mem, &r) == 0,
               "Cannot create the root thread.");
-        check(pthread_mutex_lock(&(r.mutex)) == 0, "locks");
         while (r.done != 1) {
-            check(pthread_cond_wait(&(r.doneCond), &(r.mutex)) == 0,
-                  "Cannot");
+            // Spin;
         }
-        check(pthread_mutex_unlock(&(r.mutex)) == 0, "unlocks");
-        pthread_cond_destroy(&(r.doneCond));
-        pthread_mutex_destroy(&(r.mutex));
         break;
-
     }
     return;
 

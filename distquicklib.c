@@ -1,4 +1,4 @@
-/*
+/*-
  * distquicklib: library of concurrent and distributed quicksort
  * algorithms for COMP2310 Assignment 2, 2012.
  *
@@ -28,22 +28,78 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
-
 #include "quicklib.h"
 #include "distquicklib.h"
-#include "dbg.h"
-#include "utils.h"
 
+/**
+ * Debug Macros
+ **/
 
-/*
+#include <errno.h>
+
+#define clean_errno()           (errno == 0 ? "None" : strerror(errno))
+
+#define log_err(M, ...)         do {                                          \
+                                    fprintf(stderr,                           \
+                                            "[ERROR] (%s:%d: errno: %s) " M   \
+                                            "\n", __FILE__, __LINE__,         \
+                                            clean_errno(), ##__VA_ARGS__);    \
+                                } while (0)
+
+#define log_warn(M, ...)        do {                                          \
+                                    fprintf(stderr,                           \
+                                            "[WARN] (%s:%d: errno: %s) " M    \
+                                            "\n", __FILE__, __LINE__,         \
+                                            clean_errno(), ##__VA_ARGS__);    \
+                                } while (0)
+
+#ifdef DEBUG
+#define log_info(M, ...)        do {                                          \
+                                    fprintf(stderr, "[INFO] (%s:%d) " M       \
+                                    "\n", __FILE__, __LINE__, ##__VA_ARGS__); \
+                                } while (0)
+#else
+#define log_info(M, ...)
+#endif
+
+#define check(A, M, ...)        do {                                          \
+                                    if(!(A)) {                                \
+                                        log_err(M, ##__VA_ARGS__);            \
+                                        errno=0;                              \
+                                        goto error;                           \
+                                    }                                         \
+                                } while (0)
+
+/**
  * Macros
- */
-#define min(m,n) ((m) < (n) ? (m) : (n))
-#define max(m,n) ((m) > (n) ? (m) : (n))
-#define ALLOWANCE ((int)(sizeof(int) * 1000))
-/*
+ **/
+
+#define min(m,n)                ((m) < (n) ? (m) : (n))
+
+#define max(m,n)                ((m) > (n) ? (m) : (n))
+
+#define ALLOWANCE               ((int)(sizeof(int) * 1000))
+
+#define check_arguments(A, n, p)                                              \
+                                do {                                          \
+                                    check(A != NULL, "A is NULL.");           \
+                                    check(n >= 0, "Don't be negative, man."); \
+                                    check(p >= 1, "Don't be absurd.");        \
+                                } while (0)
+
+#define check_partition(n, m, left_size, right_size)                          \
+                                do {                                          \
+                                    check(m >= 0 && m <= n &&                 \
+                                          left_size >= 0 && left_size <= n && \
+                                          right_size >= 0 && right_size <= n, \
+                                          "Something is wrong."               \
+                                          "Yet, it is not my fault."          \
+                                          "Ask Peter");                       \
+                                } while (0)
+
+/**
  * Prototypes
- */
+ **/
 static ssize_t  read_all_ints(int fildes, int *buf, int ntimes);
 
 static ssize_t  write_all_ints(int fildes, int *buf, int ntimes);
@@ -54,7 +110,6 @@ static inline in_port_t get_in_port(struct sockaddr *sa);
 
 /**
  * An interface to the printArray() function.
- * Very useful while debugging.
  **/
 static inline void
 debug_printArray(int A[], int n)
@@ -63,7 +118,6 @@ debug_printArray(int A[], int n)
     printArray(A, n);
 #endif
 }
-
 
 /**
  * A wrapper function of read(2). The unit of its arguments is ints, not bytes.
@@ -136,7 +190,9 @@ write_all_ints(int fildes, int *buf, int ntimes)
 }
 
 
-// distributed quick sort using pipes
+/**
+ * distributed quick sort using pipes
+ **/
 void
 quickPipe(int A[], int n, int p)
 {
@@ -145,10 +201,12 @@ quickPipe(int A[], int n, int p)
                     right_size,
                     m;
 
-    // Status code
+    int             fd_cp[2];
+
     ssize_t         num_ints_read,
                     num_ints_written;
-    int             fd_cp[2];
+
+    check_arguments(A, n, p);
 
     // So that I do not need to fflush(3).
     setbuf(stdout, NULL);
@@ -162,10 +220,12 @@ quickPipe(int A[], int n, int p)
         left_size = m + 1;
         right_size = n - m - 1;
 
+        check_partition(n, m, left_size, right_size);
+
         check(pipe(fd_cp) == 0, "Cannot pipe().");
 
         switch (fork()) {
-        case -1:               // This will happen. Be ready for it.
+        case -1:               // This can happen.
             log_warn("Cannot fork()");
             goto error;
 
@@ -223,6 +283,8 @@ quickSocket(int A[], int n, int p)
     struct sockaddr_in server;
     socklen_t       namelen;
 
+    check_arguments(A, n, p);
+
     namelen = sizeof(server);
 
     if (p == 1) {
@@ -232,6 +294,8 @@ quickSocket(int A[], int n, int p)
         index = m + 1;
         left_size = m + 1;
         right_size = n - m - 1;
+
+        check_partition(n, m, left_size, right_size);
 
         fd_listener = socket(AF_INET, SOCK_STREAM, 0);
         check(fd_listener != -1, "no socket");
@@ -308,7 +372,7 @@ thread_routine_join(void *info)
     struct info     ch;
     pthread_t       thread;
 
-    check(info != NULL, "Invalid argument.");
+    check_arguments(in->A, in->n, in->p);
 
     if (in->p == 1) {
         quickSort(in->A, in->n);
@@ -317,6 +381,9 @@ thread_routine_join(void *info)
         index = m + 1;
         left_size = m + 1;
         right_size = in->n - m - 1;
+
+        check_partition(in->n, m, left_size, right_size);
+
         ch.A = &(in->A[index]);
         ch.n = right_size;
         ch.p = in->p / 2;
@@ -344,7 +411,7 @@ thread_routine_mutex(void *info)
     pthread_t       thread;
     struct info     ch;
 
-    check(info != NULL, "Invalid argument.");
+    check_arguments(in->A, in->n, in->p);
 
     if (in->p == 1) {
         quickSort(in->A, in->n);
@@ -353,6 +420,8 @@ thread_routine_mutex(void *info)
         index = m + 1;
         left_size = m + 1;
         right_size = in->n - m - 1;
+
+        check_partition(in->n, m, left_size, right_size);
 
         ch.A = &(in->A[index]);
         ch.n = right_size;
@@ -398,6 +467,8 @@ thread_routine_mem(void *info)
     pthread_t       thread;
     struct info     ch;
 
+    check_arguments(in->A, in->n, in->p);
+
     if (in->p == 1) {
         quickSort(in->A, in->n);
     } else {
@@ -405,6 +476,8 @@ thread_routine_mem(void *info)
         index = m + 1;
         left_size = m + 1;
         right_size = in->n - m - 1;
+
+        check_partition(in->n, m, left_size, right_size);
 
         ch.A = &(in->A[index]);
         ch.n = right_size;
@@ -452,6 +525,8 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
         .p = p,
     };
 
+    check_arguments(pA, pn, p);
+
     switch (pWaitMech) {
 
     case WAIT_JOIN:
@@ -480,6 +555,10 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
             // Spin;
         }
         break;
+
+    default:
+        log_warn("I don't understand");
+        goto error;
     }
     return;
 

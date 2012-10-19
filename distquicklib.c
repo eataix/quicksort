@@ -60,6 +60,7 @@
  **/
 
 #include <errno.h>
+#include <string.h>
 
 #define clean_errno()           (errno == 0 ? "None" : strerror(errno))
 
@@ -102,7 +103,7 @@
 
 #define max(m,n)                ((m) > (n) ? (m) : (n))
 
-#define ALLOWANCE               ((int)(sizeof(int) * 1000))
+#define ALLOWANCE               1000
 
 #define check_arguments(A, n, p)                                              \
                                 do {                                          \
@@ -116,9 +117,14 @@
                                     check(m >= 0 && m <= n &&                 \
                                           left_size >= 0 && left_size <= n && \
                                           right_size >= 0 && right_size <= n, \
-                                          "Something is wrong."               \
-                                          "Yet, it is not my fault."          \
+                                          "Something is wrong. "              \
+                                          "Yet, it is not my fault. "         \
                                           "Ask Peter");                       \
+                                } while (0)
+#define CLOSEFD(fd)             do {                                          \
+                                    if (fd != -1) {                           \
+                                        close(fd);                            \
+                                    }                                         \
                                 } while (0)
 
 /**
@@ -168,9 +174,8 @@ read_all_ints(int fildes, int *buf, int ntimes)
     num_ints_left = ntimes;
 
     while (num_total_ints_read < ntimes) {
-        bytes_read =
-            read(fildes, buf + num_total_ints_read,
-                 sizeof(int) * min(num_ints_left, ALLOWANCE));
+        bytes_read = read(fildes, buf + num_total_ints_read,
+                          sizeof(int) * min(num_ints_left, ALLOWANCE));
         check(bytes_read > 0, "Cannot read");
         ints_read = bytes_read / sizeof(int);
         num_total_ints_read += ints_read;
@@ -198,9 +203,8 @@ write_all_ints(int fildes, int *buf, int ntimes)
     num_ints_left = ntimes;
 
     while (num_total_ints_written < ntimes) {
-        bytes_written =
-            write(fildes, buf + num_total_ints_written,
-                  sizeof(int) * min(num_ints_left, ALLOWANCE));
+        bytes_written = write(fildes, buf + num_total_ints_written,
+                              sizeof(int) * min(num_ints_left, ALLOWANCE));
         check(bytes_written > 0, "Cannot write %d", fildes);
         ints_written = bytes_written / sizeof(int);
         num_total_ints_written += ints_written;
@@ -223,7 +227,8 @@ quickPipe(int A[], int n, int p)
     int             index,
                     left_size,
                     right_size,
-                    m;
+                    m,
+                   *ptr;
 
     int             fd_cp[2];
 
@@ -231,6 +236,9 @@ quickPipe(int A[], int n, int p)
                     num_ints_written;
 
     check_arguments(A, n, p);
+
+    fd_cp[0] = -1;
+    fd_cp[1] = -1;
 
     // So that I do not need to fflush(3).
     setbuf(stdout, NULL);
@@ -246,6 +254,8 @@ quickPipe(int A[], int n, int p)
 
         check_partition(n, m, left_size, right_size);
 
+        ptr = &(A[index]);
+
         check(pipe(fd_cp) == 0, "Cannot pipe().");
 
         switch (fork()) {
@@ -254,32 +264,32 @@ quickPipe(int A[], int n, int p)
             goto error;
 
         case 0:
-            close(fd_cp[0]);
+            CLOSEFD(fd_cp[0]);
 
-            quickPipe(&A[index], right_size, p / 2);
-            num_ints_written =
-                write_all_ints(fd_cp[1], &A[index], right_size);
+            quickPipe(ptr, right_size, p / 2);
+            num_ints_written = write_all_ints(fd_cp[1], ptr, right_size);
             check(num_ints_written == right_size, "Cannot write.");
 
-            close(fd_cp[1]);
+            CLOSEFD(fd_cp[1]);
             _exit(EXIT_SUCCESS);
 
         default:
-            close(fd_cp[1]);
+            CLOSEFD(fd_cp[1]);
 
             quickPipe(A, left_size, p / 2);
-            num_ints_read = read_all_ints(fd_cp[0], &A[index], right_size);
+            num_ints_read = read_all_ints(fd_cp[0], ptr, right_size);
             check(num_ints_read == right_size, "Cannot read.");
 
-            close(fd_cp[0]);
+            CLOSEFD(fd_cp[0]);
             wait(NULL);
             break;
         }
     }
-
     return;
 
   error:
+    CLOSEFD(fd_cp[0]);
+    CLOSEFD(fd_cp[1]);
     return;
 }
 
@@ -290,10 +300,8 @@ quickSocket(int A[], int n, int p)
     int             index,
                     left_size,
                     right_size,
-                    m;
-
-    setbuf(stdout, NULL);
-    setbuf(stderr, NULL);
+                    m,
+                   *ptr;
 
     // File descriptors
     int             fd_listener,
@@ -304,12 +312,24 @@ quickSocket(int A[], int n, int p)
     ssize_t         num_ints_read,
                     num_ints_written;
 
-    struct sockaddr_in server;
+    struct sockaddr_in server = {
+        .sin_family = AF_INET,
+        .sin_port = 0,
+        .sin_addr.s_addr = INADDR_ANY
+    };
+
     socklen_t       namelen;
 
     check_arguments(A, n, p);
 
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+
     namelen = sizeof(server);
+
+    fd_listener = -1;
+    fd_p = -1;
+    fd_c = -1;
 
     if (p == 1) {
         quickSort(A, n);
@@ -321,16 +341,13 @@ quickSocket(int A[], int n, int p)
 
         check_partition(n, m, left_size, right_size);
 
+        ptr = &(A[index]);
+
         fd_listener = socket(AF_INET, SOCK_STREAM, 0);
         check(fd_listener != -1, "no socket");
 
-        server.sin_family = AF_INET;
-        server.sin_port = 0;
-        server.sin_addr.s_addr = INADDR_ANY;
-
-        check(bind
-              (fd_listener, (struct sockaddr *) &server, sizeof(server))
-              != -1, "Cannot bind(2).");
+        check(bind(fd_listener, (struct sockaddr *) &server, namelen) !=
+              -1, "Cannot bind(2).");
         check(getsockname
               (fd_listener, (struct sockaddr *) &server, &namelen)
               != -1, "Cannot getsockname(2).");
@@ -342,29 +359,32 @@ quickSocket(int A[], int n, int p)
             goto error;
 
         case 0:
-            close(fd_listener);
+            CLOSEFD(fd_p);
+            CLOSEFD(fd_listener);
 
-            quickSocket(&A[index], right_size, p / 2);
+            quickSocket(ptr, right_size, p / 2);
+
             fd_c = socket(AF_INET, SOCK_STREAM, 0);
             check(fd_c != -1, "Cannot create a socket");
-            check(connect
-                  (fd_c, (struct sockaddr *) &server, sizeof(server))
-                  != -1, "Cannot connect");
-            num_ints_written = write_all_ints(fd_c, &A[index], right_size);
+            check(connect(fd_c, (struct sockaddr *) &server, namelen) !=
+                  -1, "Cannot connect");
+            num_ints_written = write_all_ints(fd_c, ptr, right_size);
             check(num_ints_written == right_size, "Cannot write");
 
-            close(fd_c);
+            CLOSEFD(fd_c);
             _exit(EXIT_SUCCESS);
 
         default:
+            CLOSEFD(fd_c);
+
             quickSocket(A, n, p / 2);
 
             fd_p = accept(fd_listener, NULL, NULL);
-            num_ints_read = read_all_ints(fd_p, &A[index], right_size);
+            num_ints_read = read_all_ints(fd_p, ptr, right_size);
             check(num_ints_read == right_size, "Cannot read");
 
-            close(fd_listener);
-            close(fd_p);
+            CLOSEFD(fd_listener);
+            CLOSEFD(fd_p);
             return;
         }
     }
@@ -453,9 +473,9 @@ thread_routine_mutex(void *info)
         ch.num_pending_children = 0;
         check(pthread_mutex_init(&(ch.mutex), NULL) == 0,
               "Cannot initialise a mutex");
-
         check(pthread_mutex_lock(&(ch.mutex)) == 0,
               "Cannot acquire the lock");
+
         check(pthread_create(&thread, NULL, thread_routine_mutex, &ch) ==
               0, "Cannot create thread");
 
@@ -509,8 +529,8 @@ thread_routine_mem(void *info)
         ch.num_pending_children = 0;
         ch.done = 0;
 
-        check(pthread_create(&thread, NULL, thread_routine_mem, &ch) ==
-              0, "Cannot create thread");
+        check(pthread_create(&thread, NULL, thread_routine_mem, &ch) == 0,
+              "Cannot create thread");
 
         in->n = left_size;
         in->p /= 2;
@@ -541,8 +561,6 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
 {
     pthread_t       root;
     void           *res;
-    setbuf(stdout, NULL);
-    setbuf(stderr, NULL);
     struct info     r = {
         .A = pA,
         .n = pn,
@@ -550,6 +568,9 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
     };
 
     check_arguments(pA, pn, p);
+
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
 
     switch (pWaitMech) {
 

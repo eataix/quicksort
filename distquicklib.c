@@ -95,9 +95,9 @@
                                     }                                         \
                                 } while (0)
 
-/**
+/*
  * Macros
- **/
+ */
 
 #define min(m,n)                ((m) < (n) ? (m) : (n))
 
@@ -105,6 +105,11 @@
 
 #define ALLOWANCE               1000
 
+#define THRESHOLD               10
+
+/*
+ * Shorthand
+ */
 #define check_arguments(A, n, p)                                              \
                                 do {                                          \
                                     check(A != NULL, "A is NULL.");           \
@@ -121,31 +126,25 @@
                                           "Yet, it is not my fault. "         \
                                           "Ask Peter");                       \
                                 } while (0)
+
 #define CLOSEFD(fd)             do {                                          \
                                     if (fd != -1) {                           \
                                         close(fd);                            \
                                     }                                         \
                                 } while (0)
 
+#ifdef DEBUG
+#define debug_printArray(A, n)  printArray(A, n)
+#else
+#define debug_printArray(A, n)
+#endif
+
 /**
  * Prototypes
  **/
-static inline void debug_printArray(int A[], int n);
-
 static ssize_t  read_all_ints(int fildes, int *buf, int ntimes);
 
 static ssize_t  write_all_ints(int fildes, int *buf, int ntimes);
-
-/**
- * An interface to the printArray() function.
- **/
-static inline void
-debug_printArray(int A[], int n)
-{
-#ifdef DEBUG
-    printArray(A, n);
-#endif
-}
 
 /**
  * A wrapper function of read(2). The unit of its arguments is ints, not bytes.
@@ -168,6 +167,10 @@ read_all_ints(int fildes, int *buf, int ntimes)
                     bytes_read,
                     ints_read;
 
+    check(fildes != -1, "Invalid file descriptor.");
+    check(buf != NULL, "Invalid address to write.");
+    check(ntimes >= 0, "I do not know how to read %d integers", ntimes);
+
     num_total_ints_read = 0;
     num_ints_left = ntimes;
 
@@ -185,7 +188,6 @@ read_all_ints(int fildes, int *buf, int ntimes)
     return -1;
 }
 
-
 /**
  * Ditto
  **/
@@ -197,13 +199,17 @@ write_all_ints(int fildes, int *buf, int ntimes)
                     bytes_written,
                     ints_written;
 
+    check(fildes != -1, "Invalid file descriptor.");
+    check(buf != NULL, "Invalid address to write.");
+    check(ntimes >= 0, "I do not know how to write %d integers", ntimes);
+
     num_total_ints_written = 0;
     num_ints_left = ntimes;
 
     while (num_total_ints_written < ntimes) {
         bytes_written = write(fildes, buf + num_total_ints_written,
                               sizeof(int) * min(num_ints_left, ALLOWANCE));
-        check(bytes_written > 0, "Cannot write %d", fildes);
+        check(bytes_written > 0, "Cannot write");
         ints_written = bytes_written / sizeof(int);
         num_total_ints_written += ints_written;
         num_ints_left -= ints_written;
@@ -214,7 +220,6 @@ write_all_ints(int fildes, int *buf, int ntimes)
   error:
     return -1;
 }
-
 
 /**
  * distributed quick sort using pipes
@@ -242,7 +247,7 @@ quickPipe(int A[], int n, int p)
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
 
-    if (p == 1) {
+    if (p == 1 || n <= THRESHOLD) {
         quickSort(A, n);
     } else {
         m = partition(A, n);
@@ -329,7 +334,7 @@ quickSocket(int A[], int n, int p)
     fd_p = -1;
     fd_c = -1;
 
-    if (p == 1) {
+    if (p == 1 || n <= THRESHOLD) {
         quickSort(A, n);
     } else {
         m = partition(A, n);
@@ -416,7 +421,7 @@ thread_routine_join(void *info)
 
     check_arguments(in->A, in->n, in->p);
 
-    if (in->p == 1) {
+    if (in->p == 1 || in->n <= THRESHOLD) {
         quickSort(in->A, in->n);
     } else {
         m = partition(in->A, in->n);
@@ -455,7 +460,7 @@ thread_routine_mutex(void *info)
 
     check_arguments(in->A, in->n, in->p);
 
-    if (in->p == 1) {
+    if (in->p == 1 || in->n <= THRESHOLD) {
         quickSort(in->A, in->n);
     } else {
         m = partition(in->A, in->n);
@@ -488,6 +493,7 @@ thread_routine_mutex(void *info)
         pthread_mutex_destroy(&(ch.mutex));
     }
 
+    // Release the lock iff all the children have done.
     if (in->num_pending_children == 0) {
         pthread_mutex_unlock(&(in->mutex));
     }
@@ -511,7 +517,7 @@ thread_routine_mem(void *info)
 
     check_arguments(in->A, in->n, in->p);
 
-    if (in->p == 1) {
+    if (in->p == 1 || in->n <= THRESHOLD) {
         quickSort(in->A, in->n);
     } else {
         m = partition(in->A, in->n);

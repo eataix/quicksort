@@ -130,13 +130,11 @@
 /**
  * Prototypes
  **/
+static inline void debug_printArray(int A[], int n);
+
 static ssize_t  read_all_ints(int fildes, int *buf, int ntimes);
 
 static ssize_t  write_all_ints(int fildes, int *buf, int ntimes);
-
-static inline void debug_printArray(int A[], int n);
-
-static inline in_port_t get_in_port(struct sockaddr *sa);
 
 /**
  * An interface to the printArray() function.

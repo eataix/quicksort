@@ -280,6 +280,7 @@ quickPipe(int A[], int n, int p)
             break;
         }
     }
+
     return;
 
   error:
@@ -371,6 +372,7 @@ quickSocket(int A[], int n, int p)
 
             CLOSEFD(fd_c);
             _exit(EXIT_SUCCESS);
+            break;
 
         default:
             CLOSEFD(fd_c);
@@ -384,13 +386,12 @@ quickSocket(int A[], int n, int p)
 
             CLOSEFD(fd_listener);
             CLOSEFD(fd_p);
-            return;
+            wait(NULL);
+            break;
         }
     }
 
-    /*
-     * Not reacheable
-     */
+    return;
 
   error:
     CLOSEFD(fd_c);
@@ -406,7 +407,8 @@ struct info {
     int            *A;          /* Start of the array to be sorted */
     int             n;          /* No. of elements to be sorted */
     int             p;          /* No. of threads allowed */
-    int             num_pending_children;       /* Num of pending children */
+    int             num_pending_children;       /* Num of pending children 
+                                                 */
     volatile int    done;       /* Set if the child has done */
     pthread_mutex_t mutex;
 };

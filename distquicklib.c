@@ -96,20 +96,11 @@
                                 } while (0)
 
 /*
- * Macros
- */
-
-#define min(m,n)                ((m) < (n) ? (m) : (n))
-
-#define max(m,n)                ((m) > (n) ? (m) : (n))
-
-#define ALLOWANCE               1000
-
-#define THRESHOLD               10
-
-/*
  * Shorthand
+ * I really do not want to repeat myself.
  */
+#define THRESHOLD               100
+
 #define check_arguments(A, n, p)                                              \
                                 do {                                          \
                                     check(A != NULL, "A is NULL.");           \
@@ -124,7 +115,7 @@
                                           right_size >= 0 && right_size <= n, \
                                           "Something is wrong. "              \
                                           "Yet, it is not my fault. "         \
-                                          "Ask Peter");                       \
+                                          "Talk to Peter");                   \
                                 } while (0)
 
 #define CLOSEFD(fd)             do {                                          \
@@ -142,9 +133,9 @@
 /**
  * Prototypes
  **/
-static ssize_t  read_all_ints(int fildes, int *buf, int ntimes);
+static ssize_t  read_n_ints(int fildes, char *buf, int num_ints);
 
-static ssize_t  write_all_ints(int fildes, int *buf, int ntimes);
+static ssize_t  write_n_ints(int fildes, char *buf, int num_ints);
 
 /**
  * A wrapper function of read(2). The unit of its arguments is ints, not bytes.
@@ -160,29 +151,29 @@ static ssize_t  write_all_ints(int fildes, int *buf, int ntimes);
  *    to a socket. This function will attempt to handle the partial read(2).
  **/
 static          ssize_t
-read_all_ints(int fildes, int *buf, int ntimes)
+read_n_ints(int fildes, char *buf, int num_ints)
 {
-    ssize_t         num_total_ints_read,
-                    num_ints_left,
-                    bytes_read,
-                    ints_read;
+    ssize_t         num_remaining_bytes,
+                    num_total_bytes_read,
+                    num_bytes_read;
 
     check(fildes != -1, "Invalid file descriptor.");
     check(buf != NULL, "Invalid address to write.");
-    check(ntimes >= 0, "I do not know how to read %d integers", ntimes);
+    check(num_ints > 0, "I do not know how to read %d integers", num_ints);
 
-    num_total_ints_read = 0;
-    num_ints_left = ntimes;
+    num_total_bytes_read = 0;
+    num_remaining_bytes = num_ints * sizeof(int);
 
-    while (num_total_ints_read < ntimes) {
-        bytes_read = read(fildes, buf + num_total_ints_read,
-                          sizeof(int) * min(num_ints_left, ALLOWANCE));
-        check(bytes_read > 0, "Cannot read");
-        ints_read = bytes_read / sizeof(int);
-        num_total_ints_read += ints_read;
-        num_ints_left -= ints_read;
+    while (num_remaining_bytes > 0) {
+        num_bytes_read = read(fildes, buf + num_total_bytes_read,
+                              num_remaining_bytes);
+        check(num_bytes_read != 0, "Unexpected EOF");
+        check(num_bytes_read != -1, "Cannot read");
+        num_total_bytes_read += num_bytes_read;
+        num_remaining_bytes -= num_bytes_read;
     }
-    return num_total_ints_read;
+
+    return num_total_bytes_read / sizeof(int);
 
   error:
     return -1;
@@ -192,38 +183,38 @@ read_all_ints(int fildes, int *buf, int ntimes)
  * Ditto
  **/
 static          ssize_t
-write_all_ints(int fildes, int *buf, int ntimes)
+write_n_ints(int fildes, char *buf, int num_ints)
 {
-    ssize_t         num_total_ints_written,
-                    num_ints_left,
+    ssize_t         num_total_bytes_written,
                     bytes_written,
-                    ints_written;
+                    num_remaining_bytes;
 
     check(fildes != -1, "Invalid file descriptor.");
     check(buf != NULL, "Invalid address to write.");
-    check(ntimes >= 0, "I do not know how to write %d integers", ntimes);
+    check(num_ints >= 0, "I do not know how to write %d integers",
+          num_ints);
 
-    num_total_ints_written = 0;
-    num_ints_left = ntimes;
+    num_total_bytes_written = 0;
+    num_remaining_bytes = num_ints * sizeof(int);
 
-    while (num_total_ints_written < ntimes) {
-        bytes_written = write(fildes, buf + num_total_ints_written,
-                              sizeof(int) * min(num_ints_left, ALLOWANCE));
-        check(bytes_written > 0, "Cannot write");
-        ints_written = bytes_written / sizeof(int);
-        num_total_ints_written += ints_written;
-        num_ints_left -= ints_written;
+    while (num_remaining_bytes > 0) {
+        bytes_written = write(fildes, buf + num_total_bytes_written,
+                              num_remaining_bytes);
+        check(bytes_written != 0, "Unexpected EOF");
+        check(bytes_written != -1, "Cannot write");
+        num_total_bytes_written += bytes_written;
+        num_remaining_bytes -= bytes_written;
     }
 
-    return num_total_ints_written;
+    return num_total_bytes_written / sizeof(int);
 
   error:
     return -1;
 }
 
-/**
+/*
  * distributed quick sort using pipes
- **/
+ */
 void
 quickPipe(int A[], int n, int p)
 {
@@ -269,7 +260,8 @@ quickPipe(int A[], int n, int p)
             CLOSEFD(fd_cp[0]);
 
             quickPipe(ptr, right_size, p / 2);
-            num_ints_written = write_all_ints(fd_cp[1], ptr, right_size);
+            num_ints_written =
+                write_n_ints(fd_cp[1], (char *) ptr, right_size);
             check(num_ints_written == right_size, "Cannot write.");
 
             CLOSEFD(fd_cp[1]);
@@ -279,7 +271,8 @@ quickPipe(int A[], int n, int p)
             CLOSEFD(fd_cp[1]);
 
             quickPipe(A, left_size, p / 2);
-            num_ints_read = read_all_ints(fd_cp[0], ptr, right_size);
+            num_ints_read =
+                read_n_ints(fd_cp[0], (char *) ptr, right_size);
             check(num_ints_read == right_size, "Cannot read.");
 
             CLOSEFD(fd_cp[0]);
@@ -295,7 +288,9 @@ quickPipe(int A[], int n, int p)
     return;
 }
 
-// distributed quick sort using sockets
+/*
+ * distributed quick sort using sockets
+ */
 void
 quickSocket(int A[], int n, int p)
 {
@@ -305,12 +300,10 @@ quickSocket(int A[], int n, int p)
                     m,
                    *ptr;
 
-    // File descriptors
     int             fd_listener,
                     fd_p,
                     fd_c;
 
-    // Status code
     ssize_t         num_ints_read,
                     num_ints_written;
     int             status;
@@ -372,7 +365,8 @@ quickSocket(int A[], int n, int p)
             check(fd_c != -1, "Cannot create a socket");
             status = connect(fd_c, (struct sockaddr *) &server, namelen);
             check(status != -1, "Cannot connect");
-            num_ints_written = write_all_ints(fd_c, ptr, right_size);
+            num_ints_written =
+                write_n_ints(fd_c, (char *) ptr, right_size);
             check(num_ints_written == right_size, "Cannot write");
 
             CLOSEFD(fd_c);
@@ -385,7 +379,7 @@ quickSocket(int A[], int n, int p)
 
             fd_p = accept(fd_listener, NULL, NULL);
             check(fd_p != -1, "Cannot accept the connect from child.");
-            num_ints_read = read_all_ints(fd_p, ptr, right_size);
+            num_ints_read = read_n_ints(fd_p, (char *) ptr, right_size);
             check(num_ints_read == right_size, "Cannot read");
 
             CLOSEFD(fd_listener);
@@ -412,20 +406,16 @@ struct info {
     int            *A;          /* Start of the array to be sorted */
     int             n;          /* No. of elements to be sorted */
     int             p;          /* No. of threads allowed */
-    int             num_pending_children;       /* Num of pending children 
-                                                 */
+    int             num_pending_children;       /* Num of pending children */
     volatile int    done;       /* Set if the child has done */
-    /*
-     * Here may be a padding (8 bytes)
-     */
     pthread_mutex_t mutex;
 };
 
 static void    *
 thread_routine_join(void *info)
 {
-    struct info    *in,
-                    ch;
+    struct info    *self,
+                    child;
     int             m,
                     index,
                     left_size,
@@ -435,29 +425,30 @@ thread_routine_join(void *info)
     pthread_t       thread;
 
     check(info != NULL, "Invalid argument");
-    in = (struct info *) info;
-    check_arguments(in->A, in->n, in->p);
+    self = (struct info *) info;
+    check_arguments(self->A, self->n, self->p);
 
-    if (in->p == 1 || in->n <= THRESHOLD) {
-        quickSort(in->A, in->n);
+    if (self->p == 1 || self->n <= THRESHOLD) {
+        quickSort(self->A, self->n);
     } else {
-        m = partition(in->A, in->n);
+        m = partition(self->A, self->n);
         index = m + 1;
         left_size = m + 1;
-        right_size = in->n - m - 1;
+        right_size = self->n - m - 1;
 
-        check_partition(in->n, m, left_size, right_size);
+        check_partition(self->n, m, left_size, right_size);
 
-        ch.A = &(in->A[index]);
-        ch.n = right_size;
-        ch.p = in->p / 2;
-        status = pthread_create(&thread, NULL, thread_routine_join, &ch);
+        child.A = &(self->A[index]);
+        child.n = right_size;
+        child.p = self->p / 2;
+        status =
+            pthread_create(&thread, NULL, thread_routine_join, &child);
         check(status == 0, "Cannot create thread");
 
-        in->n = left_size;
-        in->p /= 2;
+        self->n = left_size;
+        self->p /= 2;
 
-        thread_routine_join(in);
+        thread_routine_join(self);
         status = pthread_join(thread, &res);
         check(status == 0, "Cannot join thread");
     }
@@ -470,8 +461,8 @@ thread_routine_join(void *info)
 static void    *
 thread_routine_mutex(void *info)
 {
-    struct info    *in,
-                    ch;
+    struct info    *self,
+                    child;
     int             m,
                     index,
                     left_size,
@@ -480,47 +471,48 @@ thread_routine_mutex(void *info)
     pthread_t       thread;
 
     check(info != NULL, "Invalid argument");
-    in = (struct info *) info;
-    check_arguments(in->A, in->n, in->p);
+    self = (struct info *) info;
+    check_arguments(self->A, self->n, self->p);
 
-    if (in->p == 1 || in->n <= THRESHOLD) {
-        quickSort(in->A, in->n);
+    if (self->p == 1 || self->n <= THRESHOLD) {
+        quickSort(self->A, self->n);
     } else {
-        m = partition(in->A, in->n);
+        m = partition(self->A, self->n);
         index = m + 1;
         left_size = m + 1;
-        right_size = in->n - m - 1;
+        right_size = self->n - m - 1;
 
-        check_partition(in->n, m, left_size, right_size);
+        check_partition(self->n, m, left_size, right_size);
 
-        ch.A = &(in->A[index]);
-        ch.n = right_size;
-        ch.p = in->p / 2;
-        ch.num_pending_children = 0;
+        child.A = &(self->A[index]);
+        child.n = right_size;
+        child.p = self->p / 2;
+        child.num_pending_children = 0;
 
-        status = pthread_mutex_init(&(ch.mutex), NULL);
+        status = pthread_mutex_init(&(child.mutex), NULL);
         check(status == 0, "Cannot initialise a mutex");
-        status = pthread_mutex_lock(&(ch.mutex));
+        status = pthread_mutex_lock(&(child.mutex));
         check(status == 0, "Cannot acquire the lock");
 
-        status = pthread_create(&thread, NULL, thread_routine_mutex, &ch);
+        status =
+            pthread_create(&thread, NULL, thread_routine_mutex, &child);
         check(status == 0, "Cannot create thread");
 
-        in->n = left_size;
-        in->p /= 2;
+        self->n = left_size;
+        self->p /= 2;
 
-        ++(in->num_pending_children);
-        thread_routine_mutex(in);
-        --(in->num_pending_children);
+        ++(self->num_pending_children);
+        thread_routine_mutex(self);
+        --(self->num_pending_children);
 
-        status = pthread_mutex_lock(&(ch.mutex));
+        status = pthread_mutex_lock(&(child.mutex));
         check(status == 0, "Cannot wait");
-        pthread_mutex_destroy(&(ch.mutex));
+        pthread_mutex_destroy(&(child.mutex));
     }
 
     // Release the lock iff all the children have done.
-    if (in->num_pending_children == 0) {
-        pthread_mutex_unlock(&(in->mutex));
+    if (self->num_pending_children == 0) {
+        pthread_mutex_unlock(&(self->mutex));
     }
     return NULL;
 
@@ -531,8 +523,8 @@ thread_routine_mutex(void *info)
 static void    *
 thread_routine_mem(void *info)
 {
-    struct info    *in,
-                    ch;
+    struct info    *self,
+                    child;
     int             m,
                     index,
                     left_size,
@@ -541,42 +533,42 @@ thread_routine_mem(void *info)
     pthread_t       thread;
 
     check(info != NULL, "Invalid argument.");
-    in = (struct info *) info;
-    check_arguments(in->A, in->n, in->p);
+    self = (struct info *) info;
+    check_arguments(self->A, self->n, self->p);
 
-    if (in->p == 1 || in->n <= THRESHOLD) {
-        quickSort(in->A, in->n);
+    if (self->p == 1 || self->n <= THRESHOLD) {
+        quickSort(self->A, self->n);
     } else {
-        m = partition(in->A, in->n);
+        m = partition(self->A, self->n);
         index = m + 1;
         left_size = m + 1;
-        right_size = in->n - m - 1;
+        right_size = self->n - m - 1;
 
-        check_partition(in->n, m, left_size, right_size);
+        check_partition(self->n, m, left_size, right_size);
 
-        ch.A = &(in->A[index]);
-        ch.n = right_size;
-        ch.p = in->p / 2;
-        ch.num_pending_children = 0;
-        ch.done = 0;
+        child.A = &(self->A[index]);
+        child.n = right_size;
+        child.p = self->p / 2;
+        child.num_pending_children = 0;
+        child.done = 0;
 
-        status = pthread_create(&thread, NULL, thread_routine_mem, &ch);
+        status = pthread_create(&thread, NULL, thread_routine_mem, &child);
         check(status == 0, "Cannot create thread");
 
-        in->n = left_size;
-        in->p /= 2;
+        self->n = left_size;
+        self->p /= 2;
 
-        ++(in->num_pending_children);
-        thread_routine_mutex(in);
-        --(in->num_pending_children);
+        ++(self->num_pending_children);
+        thread_routine_mutex(self);
+        --(self->num_pending_children);
 
-        while (ch.done != 1) {
+        while (child.done != 1) {
             // Spin;
         }
     }
 
-    if (in->num_pending_children == 0) {
-        in->done = 1;
+    if (self->num_pending_children == 0) {
+        self->done = 1;
     }
 
     return NULL;
@@ -607,7 +599,6 @@ quickThread(int *pA, int pn, int p, enum WaitMechanismType pWaitMech)
     setbuf(stderr, NULL);
 
     switch (pWaitMech) {
-
     case WAIT_JOIN:
         status = pthread_create(&root, NULL, thread_routine_join, &r);
         check(status == 0, "Cannot create the root thread.");
